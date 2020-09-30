@@ -165,7 +165,7 @@ kable(gwas_df[,-3]) %>%
 
 ```{r fig-covid19-gwas, fig.width=4.5, fig.height=4.5, out.width="33%", results='asis', warning=FALSE}
 set.seed(1707)
-# Number of permuataions + 1 (original set of CRISPR eQTLs)
+# Number of permutations + 1 (original set of CRISPR eQTLs)
 k <- 9999
 gwas_df$lambda_0.1 <- NA
 gwas_df$perm_p_lambda_0.1 <- NA
@@ -200,7 +200,7 @@ for (i in 1:nrow(gwas_df)) {
   cat("Lambda 0.5 - eQTL Lung all - ", round(as.numeric(lambda_quantile(p = sel_all_lead$all_inv_var_meta_p)), 2), " \n", fill = T)
   cat("Lambda 0.5 - eQTL Lung CRISPR hits - ", round(as.numeric(lambda_quantile(p = sel_crispr_hits$all_inv_var_meta_p)), 2), " \n", fill = T)
   
-  # Permuatation test
+  # Permutation test
   n <- nrow(sel_crispr_hits)
   perm_lambda_0.1 <- rep(NA, k)
   
@@ -208,7 +208,6 @@ for (i in 1:nrow(gwas_df)) {
     idx <- sample(1:nrow(sel_all_lead), n, replace = FALSE)
     perm_p <- sel_all_lead[idx, "all_inv_var_meta_p"]
     perm_lambda_0.1[j] <- as.numeric(lambda_quantile(p = perm_p, q = 0.1))
-    perm_pi1[j] <- 1 - qvalue(perm_p)$pi0
   }
 
   df_perm <- data.frame(lambda = perm_lambda_0.1,
@@ -254,7 +253,6 @@ for (i in 1:nrow(gwas_df)) {
   # Histogram - All eQTLs
   g_hist_1 <- ggplot(data = sel_all_lead, aes(x = all_inv_var_meta_p)) +
     labs(title = paste0(gwas_df$code[i], " GWAS - eQTL Lung all\n", nrow(sel_all_lead), " eVariants"),
-         subtitle = bquote(pi[1] == ~ .(pi1_all)),
          x = "GWAS P-value for selected eVariants",
          y = "Count") +
     geom_histogram(col = "forestgreen", fill = "white", breaks = seq(0, 1, by = 1/20))
@@ -263,7 +261,6 @@ for (i in 1:nrow(gwas_df)) {
   # Histogram - CRISPR genes with eQTLs
   g_hist_2 <- ggplot(data = sel_crispr_hits, aes(x = all_inv_var_meta_p)) +
     labs(title = paste0(gwas_df$code[i], " GWAS - eQTL Lung CRISPR hits\n", nrow(sel_crispr_hits), " eVariants"),
-         subtitle = bquote(pi[1] == ~ .(pi1_crispr)),
          x = "GWAS P-value for selected eVariants",
          y = "Count") +
     geom_histogram(col = "darkorchid", fill = "white", breaks = seq(0, 1, by = 1/20)) +
@@ -295,7 +292,7 @@ for (i in 1:nrow(gwas_df)) {
   print(g_log_perm_hist_1)
     
   # Clean up
-  rm(lambda_all, lambda_crispr, perm_lambda_0.1, perm_pi1)
+  rm(lambda_all, lambda_crispr, perm_lambda_0.1)
 
 }
 
