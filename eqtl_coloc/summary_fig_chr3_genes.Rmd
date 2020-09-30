@@ -1,0 +1,485 @@
+---
+title: "Summary of chr3 locus associations"
+author: "Silva Kasela"
+date: "7/24/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.path = here::here("eqtl_coloc", "fig/"), dev = c('png', 'pdf'))
+options(knitr.table.format = "html") 
+
+library(here)
+library(Gviz)
+library(biomaRt)
+library(RColorBrewer)
+library(knitr)
+library(kableExtra)
+library(seqminer)
+
+source(here("eqtl_coloc", "functions_plot_locus.R"))
+source(here("eqtl_coloc", "functions_get_genomatrix.R"))
+
+```
+
+Prioritization of genes in the chr3p21.31 locus based on sbRanks from the CRISPR screen and eQTL + coloc data 
+
+```{r}
+window <- 500000
+gwas_chr <- 3
+gwas_pos <- 45867022
+gwas_hit_id <- "chr3_45867022_C_G_b38"
+
+# genes of interest
+genes <- c("LIMD1", "SACM1L", "SLC6A20", "LZTFL1", "CCR9", "FYCO1", "CXCR6", "XCR1")
+
+# eQTL data
+eqtl_catalogue <- read.table(here("eqtl_coloc", "summary_coloc_eQTL_catalogue.txt"), header = T, sep = "\t", stringsAsFactors = F)
+gtex <- read.table(here("eqtl_coloc", "summary_coloc_GTEx_v8.txt"), header = T, sep = "\t", stringsAsFactors = F)
+
+# sbRanks
+ranks_lowMOI <- read.table(here("data", "ranks_sbScore_lowMOI.txt"), header = T, sep = "\t", stringsAsFactors = F)
+ranks_lowMOI$ranks <- 1:nrow(ranks_lowMOI)
+
+ranks_highMOI <- read.table(here("data", "ranks_sbScore_highMOI.txt"), header = T, sep = "\t", stringsAsFactors = F)
+ranks_highMOI$ranks <- 1:nrow(ranks_highMOI)
+
+```
+
+eQTLs datasets from the eQTL Catalogue and GTEx v8
+
+* `r length(unique(eqtl_catalogue$eqtl_data))` different eQTL datasets from the eQTL Catalogue
+* `r length(unique(gtex$eqtl_data))` different tissues from GTEx
+
+Ranking of genes according to sbScore - low MOI:
+
+```{r}
+kable(ranks_lowMOI[ranks_lowMOI$gene_id %in% genes,], row.names = F) %>% 
+        kable_styling(bootstrap_options = c("striped", "condensed"), full_width = F, font_size = 14)
+
+ranks_lowMOI <- ranks_lowMOI[match(genes, ranks_lowMOI$gene_id), ]
+
+```
+
+Ranking of genes according to sbScore - high MOI:
+
+```{r}
+kable(ranks_highMOI[ranks_highMOI$gene_id %in% genes,], row.names = F) %>% 
+        kable_styling(bootstrap_options = c("striped", "condensed"), full_width = F, font_size = 14)
+
+ranks_highMOI <- ranks_highMOI[match(genes, ranks_highMOI$gene_id), ]
+
+```
+
+```{r fig-genes, fig.width=10, fig.height=3}
+# Gene diagrams
+gen <- "hg38"
+chr <- paste0("chr", gwas_chr)
+xmin <- 45.52 * 1000000
+xmax <- 46.06 * 1000000
+
+# ideogram
+itrack <- IdeogramTrack(genome = gen, chromosome = chr)
+
+# coordinates
+gtrack <- GenomeAxisTrack()
+
+# highlight lead gwas variant
+atrack <- AnnotationTrack(genome = gen, chromosome = chr, start = gwas_pos, end = gwas_pos + 1, name = "SNP", col = "royalblue",  cex.title = 1.1)
+
+# ensembl genes track
+bm <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl")
+# limit the returned gene models to RefSeq models only - filter=list(with_refseq_mrna=TRUE), 
+biomtrack <- BiomartGeneRegionTrack(genome = gen, chromosome = chr, start = xmin, end = xmax, name = "Genes", biomart = bm, cex.title = 1.1, stacking = "squish")
+
+# plot the union of all the exons as a sort of meta-transcript
+plotTracks(list(itrack, gtrack, atrack, biomtrack), collapseTranscripts = "meta", transcriptAnnotation = "symbol", stackHeight = 0.25, from = xmin, to = xmax, cex.main = 1.1)
+
+```
+
+```{r fig-eqtl-p, fig.width=10, fig.height=5}
+# gene start
+gene_mart = getBM(attributes = c('hgnc_symbol', 'start_position'), 
+                  filters = 'hgnc_symbol', 
+                  values = genes, 
+                  mart = bm)
+gene_mart <- gene_mart[match(genes, gene_mart$hgnc_symbol), ]
+
+## 1) Plot eQTL P-values
+highlight_eqtl <- list()
+j <- 1
+# p-value threshold to highlight eQTLs
+pth <- 1e-4
+
+colors <- c('#e41a1c','#377eb8','#4daf4a','#984ea3','#ff7f00','#ffff33', '#a65628','#f781bf','#999999') 
+k <- 1
+
+legend <- NULL
+plot(1:8, rep(0, 8), ylim = c(0, 8), xlim = c(xmin, xmax), col = "white", xlab = "", ylab = "-log(eQTL P-value)", axes = FALSE)
+
+# add vertical lines to mark the start of the gene
+for (i in 1:nrow(gene_mart)) {
+  abline(v = gene_mart$start_position[i], lty = 2, col = "grey90")
+}
+
+group <- unique(eqtl_catalogue$eqtl_data)
+for (g in group) {
+  sel <- eqtl_catalogue[eqtl_catalogue$eqtl_data %in% g,]
+
+  # min P-value across different probes
+  if (sum(duplicated(sel$eqtl_gene_name)) > 0) {
+    sel <- sel[order(sel$lead_gwas_variant_eqtl_pval), ]
+    sel <- sel[!duplicated(sel$eqtl_gene_name), ]
+    sel <- sel[match(genes, sel$eqtl_gene_name), ]
+  }
+
+  p <- sel$lead_gwas_variant_eqtl_pval
+  p[is.na(p)] <- 1
+  
+  if (sum(p < pth, na.rm = T) > 0) {
+    legend <- c(legend, sub("_ge", "", g))
+    col <- colors[k]
+    lwd <- 2
+    k <- k + 1
+    highlight_eqtl[[j]] <- cbind(sel, col = rep(col, nrow(sel)))
+    j <- j + 1
+  } else {
+    col <- "grey85"
+    lwd <- 2
+  }
+  lines(c(xmin, gene_mart$start_position, xmax), c(0, -log10(p), 0), col = col, lwd = lwd)
+}
+
+group <- unique(gtex$eqtl_data)
+for (g in group) {
+  sel <- gtex[gtex$eqtl_data %in% g,]
+  p <- sel$lead_gwas_variant_eqtl_pval
+  p[is.na(p)] <- 1
+  
+  if (sum(p < pth, na.rm = T) > 0) {
+    legend <- c(legend, sub("_ge", "", g))
+    col <- colors[k]
+    lwd <- 2
+    k <- k + 1
+    highlight_eqtl[[j]] <- cbind(sel, col = rep(col, nrow(sel)))
+    j <- j + 1
+  } else {
+    col <- "grey85"
+    lwd <- 1
+  }
+  lines(c(xmin, gene_mart$start_position, xmax), c(0, -log10(p), 0), col = col, lwd = lwd)
+}
+
+axis(2, ylim = c(0, 8), col = "black", las = 1)
+axis(1, at = pretty(c(xmin, xmax)), labels = pretty(c(xmin, xmax))/1e6)
+mtext(paste0("Position on chr", gwas_chr, " (Mb)"), side = 1, col = "black", line = 2.5)  
+
+legend("topleft", legend = legend, col = colors, lty = 1, bty = "n")
+
+# Add coloc support to the figure
+for (i in 1:length(highlight_eqtl)) {
+  add <- highlight_eqtl[[i]]
+  add <- add[!is.na(add$coloc_pp4),]
+  add <- add[add$lead_gwas_variant_eqtl_pval < pth,]
+  
+  for (j in 1:nrow(add)) {
+    points(gene_mart[match(add$eqtl_gene_name[j], gene_mart$hgnc_symbol), "start_position"], -log10(add$lead_gwas_variant_eqtl_pval[j]),
+          pch = ifelse(add$coloc_pp4[j] > 0.25, 15, 0), col = as.character(add$col[j]))
+  }
+}
+
+```
+
+```{r fig-ranks, fig.width=10, fig.height=3}
+## Plot ranks
+plot(c(xmin, gene_mart$start_position, xmax), log10(c(19000, ranks_lowMOI$ranks, 19000))*(-1), pch = c(NA, rep(15, 8), NA),  xlab = "", ylab = "", ylim = c(-4.3, -1), axes = FALSE, type = "b", col = "black")
+# add vertical lines to mark the start of the gene
+for (i in 1:nrow(gene_mart)) {
+  abline(v = gene_mart$start_position[i], lty = 2, col = "grey90")
+}
+
+lines(c(xmin, gene_mart$start_position, xmax), log10(c(19000, ranks_highMOI$ranks, 19000))*(-1), pch = c(NA, rep(15, 8), NA), type = "b", col = "royalblue")
+
+axis(1, at = pretty(c(xmin, xmax)), labels = pretty(c(xmin, xmax))/1e6)
+mtext(paste0("Position on chr", gwas_chr, " (Mb)"), side = 1, col = "black", line = 2.5)  
+
+## a little farther out (line=4) to make room for labels
+mtext("sbScore", side = 4, col = "black", line = 4) 
+axis(4, at = pretty(c(-4.3, -1), 4), labels = rev(as.integer(10**pretty(c(1, 4.3), n = 4))), col = "black", col.axis = "black", las = 1)
+
+legend("topleft", legend = c("sbScore-lowMOI", "sbScore-highMOI"), col = c("black", "royalblue"), lty = 1, bty = "n")
+ 
+```
+
+#### Regional plots
+
+Regional plots for every gene in the tissue where the GWAS variant has the lowest eQTL P-value.
+
+```{r}
+best_tissue <- rbind(eqtl_catalogue, gtex)
+
+# select best eQTL data set for genes based on eQTL P-value of the GWAS variant
+best_tissue <- best_tissue[order(best_tissue$lead_gwas_variant_eqtl_pval), ]
+best_tissue <- best_tissue[!duplicated(best_tissue$eqtl_gene_name),]
+
+stopifnot(gene_mart$hgnc_symbol %in% best_tissue$eqtl_gene_name)
+best_tissue <- best_tissue[match(gene_mart$hgnc_symbol, best_tissue$eqtl_gene_name),]
+
+kable(best_tissue, row.names = F) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = F, font_size = 14)
+
+```
+
+Color points to show the LD between the lead GWAS variant and other variants:
+
+__GWAS__  - use genotype data from 1000G Project, calculate LD as weighted average of r2 value based on the counts of ancestral populations in the meta-analysis
+
+* Need to leave out ARAB - no match from 1000G Project
+* CSA is Central/South Asian ancestry, replace with SAS (South Asian)
+* EUR - non-Finnish European subpopulations (all the subpopulations excluding FIN)
+    
+```{r gwas-data-populations}
+# Studies contributing to ANA_C2_V2 GWAS (from COVID-19 HGI webapge)
+studies_df <- data.frame(c("HOSTAGE_EUR", 1610, 2205),
+                        c("DECODE_EUR",	1597,	282150),
+                        c("UKBB_EUR",	1190,	419341),
+                        c("GENCOVID_EUR",	407, 2461),
+                        c("FinnGen_FIN", 264, 203376),
+                        c("LifelinesGsa_EUR",	247, 18403),
+                        c("QGP_ARAB",	197, 13698),
+                        c("BRACOVID_AMR",	176, 1533),
+                        c("genomicsengland100kgp_EUR", 147,	562),
+                        c("INTERVAL_EUR",	137, 41699),
+                        c("Helix_EUR", 133, 3404),
+                        c("NTR_EUR", 121,	4648),
+                        c("GNH_SAS", 114, 27301),
+                        c("PHBB_EUR",	97,	28927),
+                        c("LifelinesCyto_EUR", 82, 6488),
+                        c("UKBB_AFR",	63,	6573),
+                        c("UKBB_CSA",	57,	8819),
+                        c("BelCovid_EUR",	57,	1484),
+                        stringsAsFactors = F)
+studies_df <- data.frame(t(studies_df), stringsAsFactors = F)
+rownames(studies_df) <- 1:nrow(studies_df)
+colnames(studies_df) <- c("Name",	"n_cases", "n_controls")
+studies_df$total <- apply(studies_df[, 2:3], 1, function(x) sum(as.numeric(x)))
+studies_df$group <- sapply(studies_df$Name, function(x) unlist(strsplit(x, "_"))[2])
+
+# CSA is Central/South Asian ancestry, replace with SAS (South Asian) to get a match from 1000G
+studies_df[grepl("CSA", studies_df$group), "group"] <- "SAS"
+
+kable(studies_df) %>% 
+        kable_styling(bootstrap_options = c("striped", "condensed"), full_width = F, font_size = 14)
+
+# Counts per group
+counts <- tapply(studies_df$total, studies_df$group, sum)
+print(counts)
+
+```    
+
+__eQTL Catalogue__ - use genotype data from 1000G Project, calculate weighted average LD based on the ancestral populations (see the [link](https://www.ebi.ac.uk/eqtl/Datasets/) for the PCA plots by the eQTL Catalogue)
+
+```{r}
+counts_eqtl <- list()
+
+# Phenotype data for the studies to get ancestry counts
+schmiedel_pop <- read.table(here("eqtl_coloc", "schmiedel_stable_1a.txt"), header = T, sep = "\t", stringsAsFactors = F)
+schmiedel_pop$group <- ifelse(schmiedel_pop$Ethnicity %in% "Hispanic or Latino", "AMR",
+                              ifelse(schmiedel_pop$Race %in% "Black or African American", "AFR",
+                                     ifelse(schmiedel_pop$Race %in% "Asian", "EAS/SAS",
+                                            ifelse(schmiedel_pop$Race %in% "White", "EUR", NA))))
+counts_eqtl[[1]] <- table(schmiedel_pop$group)
+names(counts_eqtl)[1] <- "Schmiedel_2018"
+
+counts_eqtl[[2]] <- 1
+names(counts_eqtl[[2]]) <- "EUR"
+names(counts_eqtl)[2] <- "CEDAR"
+
+counts_eqtl[[3]] <- 1
+names(counts_eqtl[[3]]) <- "EUR"
+names(counts_eqtl)[3] <- "TwinsUK"
+
+```
+
+* Schmiedel_2018 - most of the sampels cluster together with AFR, EUR, SAS, EAS superpopulations from 1000G
+    + Phenotype data of the samples from [Table S1](https://www.cell.com/cell/fulltext/S0092-8674(18)31331-X?_returnURL=https%3A%2F%2Flinkinghub.elsevier.com%2Fretrieve%2Fpii%2FS009286741831331X%3Fshowall%3Dtrue#supplementaryMaterial)
+
+```{r}
+counts_eqtl[["Schmiedel_2018"]]
+```
+
+* CEDAR - most of the sampels cluster together with EUR superpopulations from 1000G
+
+```{r}
+counts_eqtl[["CEDAR"]]
+```
+
+* TwinsUK - most of the sampels cluster together with EUR superpopulations from 1000G
+
+```{r}
+counts_eqtl[["TwinsUK"]]
+```
+
+__GTEx eQTLs__ - use genotype data from GTEx, calculate LD using the same individuals that were used in eQTL mapping for that tissue
+
+##### Regional associaition plot for GWAS
+
+```{r fig-regional-plots-best-pval, fig.width=4, fig.height=3, fig.show='hold', out.width="33%"}
+range <- paste0(gwas_chr, ":",  gwas_pos - window, "-", gwas_pos + window)
+
+# 1000G populations
+pop_1kg <- read.table("~/data/1kg/gazal_et_al_2019.table_S4.filtered_unrelated_outbred.txt", header = T, sep = "\t", stringsAsFactors = F)
+pop_1kg <- pop_1kg[!pop_1kg$IID %in% "NA18498",] # not in the genotype file?
+
+# eQTL Catalogue paths
+tabix_paths <- read.table("https://raw.githubusercontent.com/eQTL-Catalogue/eQTL-Catalogue-resources/master/tabix/tabix_ftp_paths.tsv", sep = "\t", header = TRUE, stringsAsFactors = FALSE)
+tabix_paths$id <- paste0(tabix_paths$study, "_", tabix_paths$quant_method, "_", tabix_paths$qtl_group)
+
+for (type in c("gwas", best_tissue$eqtl_gene_name)) {
+  print(type)
+  if (type %in% "gwas") {
+    # GWAS data
+    gwas_analysis <- "ANA_C2_V2"
+    gwas_file <- list.files(path = here("data"), pattern = gwas_analysis)
+    gwas_file <- gwas_file[!grepl(".tbi", gwas_file)]
+    data <- tabix.read.table(tabixFile = here("data", gwas_file), tabixRange = range, stringsAsFactors = FALSE)
+    data$variant_id <- paste0("chr", gsub(":", "_", data$SNP), "_b38")
+    data$pval <- data$all_inv_var_meta_p
+    data$pos <- data$POS
+    
+    cat("For LD using 1000G, showing weighted average", fill = T)
+    groups <- unique(studies_df$group)
+    groups <- groups[!groups %in% "ARAB"]
+    weight <- counts[groups]
+    
+    # PP from coloc for figure
+    pp3 <- NULL
+    pp4 <- NULL
+    max_y <- NULL
+    
+  } else {
+    i <- which(best_tissue$eqtl_gene_name %in% type)
+    cat(best_tissue$eqtl_gene_name[i], fill = TRUE)
+    ftp_path <- ifelse(grepl("GTEx", best_tissue$eqtl_data[i]),
+                       paste0("~/gtex_v8/eqtl/GTEx_Analysis_v8_eQTL_all_associations_indexed/results/", sub("GTEx_v8_ge_", "", best_tissue$eqtl_data[i]), ".allpairs.txt.gz"),
+                       tabix_paths[match(best_tissue$eqtl_data[i], tabix_paths$id), "ftp_path"])
+    eqtl_range <- ifelse(grepl("GTEx", best_tissue$eqtl_data[i]), paste0("chr", range), range)
+    data <- tabix.read.table(tabixFile = ftp_path, tabixRange = eqtl_range, stringsAsFactors = FALSE)
+    
+    ## PP from coloc for figure
+    pp3 <- best_tissue$coloc_pp3[i]
+    pp4 <- best_tissue$coloc_pp4[i]
+
+    # Process data
+    if (grepl("GTEx", best_tissue$eqtl_data[i])) {
+      data$rsid <- NA
+      data$ref <- sapply(data$variant_id, function(x) unlist(strsplit(x, "_"))[3])
+      data$alt <- sapply(data$variant_id, function(x) unlist(strsplit(x, "_"))[4])
+      cat("For LD using GTEx", fill = T)
+      groups <- "GTEx"
+      weight <- 1
+    } else {
+      if (ncol(data) == 19) {
+        # Some file have 19 columns
+        colnames(data) <- c("molecular_trait_id", "chromosome", "position", "ref", "alt", "variant", "ma_samples", "an", "ac", "maf", "pvalue", "beta", "se", "molecular_trait_object_id", "gene_id", "median_tpm", "r2", "type", "rsid")
+      } else {
+        colnames(data) <- c("variant", "type", "rsid", "ref", "r2", "pvalue", "position", "molecular_trait_object_id", "molecular_trait_id", "median_tpm", "maf", "gene_id", "chromosome", "beta", "an", "alt", "ac")
+      }
+      data$variant_id <- paste0("chr", data$chromosome, "_", data$position, "_", data$ref, "_", data$alt, "_b38")
+      data$pos <- data$position
+      
+      cat("For LD using 1000G, showing weighted average", fill = T)
+      idx <- sapply(names(counts_eqtl), function(x) grepl(x, best_tissue$eqtl_data[i]))
+      idx <- which(idx)
+      groups <- names(counts_eqtl[[idx]])
+      weight <- counts_eqtl[[idx]]
+    }
+    
+    data <- data[data$gene_id %in% best_tissue$eqtl_gene_id[i],]
+    colnames(data)[colnames(data) %in% c("pval_nominal", "pvalue")] <- "pval"
+  
+    if (!is.na(best_tissue$eqtl_molecular_trait_id[i])) {
+      data <- data[data$molecular_trait_id %in% best_tissue$eqtl_molecular_trait_id[i], ]
+    }
+    
+    # Set y axis limits for eQTL datasets
+    # max_y <- -log10(min(best_tissue$lead_eqtl_pval))
+    max_y <- max(4.5, -log10(min(data$pval)))
+    
+    # Remove rsid duplicates and multi-allelic variants
+    data <- data %>%
+      dplyr::select(-rsid) %>%
+      dplyr::distinct() %>% #rsid duplicates
+      dplyr::mutate(id = paste(gwas_chr, pos, sep = ":")) %>%
+      dplyr::group_by(id) %>%
+      dplyr::mutate(row_count = dplyr::n()) %>%
+      dplyr::ungroup() %>%
+      dplyr::filter(row_count == 1) %>% #Multialllics
+      dplyr::mutate(SNP = paste(gwas_chr, pos, ref, alt, sep = ":")) %>%
+      data.frame()
+  } 
+
+  # Get LD
+  ld_list <- list()
+  for (j in 1:length(groups)) {
+    g <- groups[j]
+    cat(g, fill = TRUE)
+    if (g == "GTEx") {
+      gtex_cov <- read.table(paste0("~/gtex_v8/eqtl/GTEx_Analysis_v8_eQTL_covariates/", sub("GTEx_v8_ge_", "", best_tissue$eqtl_data[i]), ".v8.covariates.txt"), header = T, sep = "\t", stringsAsFactors = F, row.names = 1, nrows = 5)
+      indiv <- colnames(gtex_cov)
+      genofile <- "~/gtex_v8/genotypes/WGS/variant_calls/GTEx_Analysis_2017-06-05_v8_WholeGenomeSeq_838Indiv_Analysis_Freeze.SHAPEIT2_phased.vcf.gz"
+    } else if (g == "EUR") {
+      indiv <- pop_1kg[pop_1kg$SUPER_POP %in% g & !pop_1kg$POP %in% "FIN", "IID"]
+      genofile <- paste0("~/data/1kg/phase3_GRCh38/ALL.chr", gwas_chr, ".shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz")
+    } else if (g == "FIN") {
+      indiv <- pop_1kg[pop_1kg$POP %in% "FIN", "IID"]
+      genofile <- paste0("~/data/1kg/phase3_GRCh38/ALL.chr", gwas_chr, ".shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz")
+    } else if (g == "EAS/SAS") {
+      indiv <- pop_1kg[pop_1kg$SUPER_POP %in% c("EAS", "SAS"), "IID"]
+      genofile <- paste0("~/data/1kg/phase3_GRCh38/ALL.chr", gwas_chr, ".shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz")
+    } else {
+      indiv <- pop_1kg[pop_1kg$SUPER_POP %in% g, "IID"]
+      genofile <- paste0("~/data/1kg/phase3_GRCh38/ALL.chr", gwas_chr, ".shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz")
+    }
+
+    # Geno matrix
+    cat(length(indiv), fill = TRUE)
+    cat("Genotype data from ", genofile, fill = T)
+    geno <- get_geno_matrix(genofile = genofile, range = range, variant_id = data$variant_id, indiv = indiv)
+
+    # Calculate LD using the lead GWAS hit as the index variant
+    ld_r <- cor(geno)
+    ld_r <- ld_r[gwas_hit_id,]
+    ld <- ld_r**2
+  
+    # save
+    ld_list[[j]] <- ld
+    names(ld_list)[j] <- g
+    rm(ld, ld_r)
+  }
+
+  ld <- do.call(cbind, ld_list)
+  # Weighted average LD if more than 1 ancestry group
+  if (ncol(ld) > 1) {
+    # Can't use matrix multiplication, because not all groups have variation in one specific variant
+    ld <- apply(ld, 1, function(x) {
+      idx <- which(!is.na(x))
+      sum(x[idx] * weight[idx])/sum(weight[idx])
+    })
+    data$ld <- ld[data$variant_id]
+  } else {
+    data$ld <- ld[match(data$variant_id, rownames(ld)), 1]
+  }
+  
+  g <- locuszoom_ld(data = data,
+                    main = ifelse(type %in% "gwas", paste0("COVID-19 GWAS (", gwas_analysis, ")"), paste0("cis-eQTLs for ", best_tissue$eqtl_gene_name[i], " - ", best_tissue$eqtl_data[i])),
+                    pp3 = pp3,
+                    pp4 = pp4,
+                    highlight_index = which(data$pos == gwas_pos), 
+                    highlight_index.label = data[data$pos == gwas_pos, "SNP"],
+                    max_y = max_y,
+                    point_size = 2)
+  print(g)
+}
+
+```
