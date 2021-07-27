@@ -5,7 +5,7 @@
 # Q-Q plot with confidence bands ----------------
 
 # library(ggplot2)
-# library(ggraster)
+# library(ggrastr)
 
 qqplot_confbands <- function(pval,
                              confidence = 0.95, confbands = TRUE,
@@ -17,8 +17,14 @@ qqplot_confbands <- function(pval,
   #-----------------
   # add_p- NULL or list() of p-value vectors to add to the plot, add_p = list(x = sel_crispr_hits$all_inv_var_meta_p, y = random$all_inv_var_meta_p)
   # add_group - NULL or list() of group names, add_group = list(x = "CRISPR", y = "Random")
-  # raster_plot - uses ggraster::geom_point_rast to create rasterized plots and keep text as vectors
+  # raster_plot - uses ggrastr::geom_point_rast to create rasterized plots and keep text as vectors
   #----------------
+
+  # Exclude missing values
+  if (sum(is.na(pval)) > 0) {
+    cat("Exclude missing P-values - ", sum(is.na(pval)), fill = TRUE)
+    pval <- pval[!is.na(pval)]
+  }
 
   alpha <- 1 - confidence
   n <- length(pval)
@@ -29,7 +35,10 @@ qqplot_confbands <- function(pval,
   upper <- qbeta((1 - alpha/2), k, n + 1 - k)
   expected <- (1:n - 0.5)/n
 
-  max_p <- ceiling(max(-log10(pval),-log10(expected)))
+  max_p <- ceiling(max(-log10(pval), -log10(expected), -log10(lower), -log10(upper)))
+  if (!is.null(add_p)) {
+    max_p <- max(max_p, ceiling(sapply(add_p, function(x) max(-log10(x), na.rm = T))))
+  }
 
   # Prepare dataframe for plotting
   df <- data.frame(expected = -log10(expected),
@@ -64,12 +73,17 @@ qqplot_confbands <- function(pval,
     show_legend <- TRUE # show legend, otherwise keep `show_legend = FALSE`
     l <- length(add_p)
     for (i in 1:l) {
-      n <- length(add_p[[i]])
-      expected <- (1:n - 0.5)/n
+      obs <- add_p[[i]]
+      if (sum(is.na(obs)) > 0) {
+        cat("Exclude missing P-values in `add_p` element", i, "-", sum(is.na(obs)), fill = TRUE)
+        obs <- obs[!is.na(obs)]
+      }
 
       # Prepare dataframe for plotting
+      n <- length(obs)
+      expected <- (1:n - 0.5)/n
       df_add <- data.frame(expected = -log10(expected),
-                           observed = -log10(sort(add_p[[i]])))
+                           observed = -log10(sort(obs)))
 
       if (i == 1) {
         add_group_name_1 <- ifelse(is.null(add_group[[i]]), paste0("Trait", i + 1), add_group[[i]])
@@ -136,5 +150,13 @@ qqplot_confbands <- function(pval,
 
 # Calculate lambda for different chi-square distribution quantiles -------------
 
-lambda_quantile <- function(p, q = 0.5) quantile(qchisq(p, df = 1, lower.tail = FALSE), probs = q) / qchisq(q, df = 1)
+lambda_quantile <- function(pval, q = 0.5) {
+  # Exclude missing values
+  if (sum(is.na(pval)) > 0) {
+    cat("Exclude missing P-values - ", sum(is.na(pval)), fill = TRUE)
+    pval <- pval[!is.na(pval)]
+  }
 
+  l <- quantile(qchisq(pval, df = 1, lower.tail = FALSE), probs = q) / qchisq(q, df = 1)
+  return(l)
+}
