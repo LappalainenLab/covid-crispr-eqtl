@@ -1,0 +1,390 @@
+---
+title: "Summary of sQTL and tuQTL associations on chr3 GWAS locus - B2 analysis"
+author: "Silva Kasela"
+date: "6/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.path = here::here("covid_gwas", "freeze5", "chr3_coloc", "fig_summary_coloc_B2_other_molqtls/"), dev = c('png', 'pdf'))
+options(knitr.table.format = "html") 
+
+library(here)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(pheatmap)
+library(knitr)
+library(kableExtra)
+
+# ggplot2 theme
+theme_set(theme_classic() +
+            theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 12),
+                  axis.title = element_text(size = 12),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 11),
+                  strip.text = element_text(size = 10),
+                  legend.title = element_text(size = 12),
+                  legend.text = element_text(size = 11)))
+
+```
+
+Can we detect colocalization signal between COVID-19 GWAS and sQTLs/tuQTLs?
+
+```{r}
+gwas_analysis <- "B2_ALL_leave_23andme"
+lead_gwas <- "3:45823240:T:C"
+qtl_analysis <- c("GTEx_v8_sqtl", "eQTL_catalogue_tx", "eQTL_catalogue_txrev")
+
+```
+
+
+Data
+
+* COVID-19 HGI (Freeze 5 data): `r gwas_analysis` - hospitalized covid vs. population GWAS summary statistics
+* eQTL Catalogue: transcript usage QTL (tuQTL) summary statistics from various (immune) cell types
+* GTEx v8: sQTL summary statistics from 49 tissues
+
+Approach
+
+Run coloc between COVID-19 GWAS and sQTLs/tuQTLs, if there’s an sVariant/tuVariant within 100kb of the GWAS variant with nominal p-value < 10-4
+
+* Coloc-standard
+    + Run coloc in a 1Mb-region centered on the lead GWAS variant (+/- 500kb from the lead GWAS variant)
+        * Priors used: `p1` = 1e-4, `p2` = 1e-4, `p12` = 5e-6
+* Coloc-cond/mask
+    + Run coloc in a 2Mb-region centered on the lead GWAS variant (+/- 1Mb from the lead GWAS variant)
+    + Conditioning used for GTEx v8 with LD data from GTEx, masking used for eQTL catalogue data with LD from 1000G EUR population
+        * `p1` = 1e-4, `p2` = 1e-4, `p12` = 5e-6
+        * `mode` = 'iterative', `pthr` = 1e-04 (P-value threshold for secondary signals), `r2thr` = 0.01 (LD threshold for masking), `maxhits` = 3
+
+```{r}
+res_list <- list()
+res_condmask_list <- list()
+
+```
+
+```{r read-in-data}
+# eQTL Catalogue studies - eQTL Catalogue
+tabix_paths <- read.table("https://raw.githubusercontent.com/eQTL-Catalogue/eQTL-Catalogue-resources/master/tabix/tabix_ftp_paths.tsv", sep = "\t", header = TRUE, stringsAsFactors = FALSE)
+tabix_paths <- tabix_paths %>%
+  filter(!quant_method %in% c("ge", "microarray", "exon"))
+tabix_paths$id <- sapply(tabix_paths$ftp_path, function(x) unlist(strsplit(x, "/"))[11])
+tabix_paths$id <- sapply(tabix_paths$id, function(x) unlist(strsplit(x, "[.]"))[1])
+
+# coloc-standard -------------------------
+# Results of coloc
+res_list <- lapply(qtl_analysis, function(x) {
+  res <- read.table(here("covid_gwas", "freeze5", "chr3_coloc", "result", paste0("summary_coloc.", gwas_analysis, ".", x, ".txt")), header = T, sep = "\t", stringsAsFactors = F)
+  if (grepl("eQTL_catalogue", x)) {
+    res$id <- res$tuqtl_data
+    res$id_match <- paste0(res$id, "_", res$tuqtl_gene_name, "_", res$tuqtl_molecular_trait_id)
+    stopifnot(tabix_paths[paste0("eQTL_catalogue_", tabix_paths$quant_method) %in% x, "id"] %in% res$id)
+    colnames(res) <- gsub("tuqtl", "eqtl", colnames(res))
+  } else {
+    res$id <- sapply(res$sqtl_data, function(x) sub("GTEx_v8_sqtl_splicing_", "", x))
+    res$id_match <- paste0(res$id, res$sqtl_gene_name)
+    colnames(res) <- gsub("sqtl", "eqtl", colnames(res))
+  }
+  return(res)
+})
+names(res_list) <- qtl_analysis
+
+# coloc-condmask -------------------------
+# Results of coloc
+res_condmask_list <- lapply(qtl_analysis, function(x) {
+  res <- read.table(here("covid_gwas", "freeze5", "chr3_coloc", "result_condmask", paste0("summary_coloc_condmask.", gwas_analysis, ".", x, ".txt")), header = T, sep = "\t", stringsAsFactors = F)
+  if (grepl("eQTL_catalogue", x)) {
+    res$id <- res$tuqtl_data
+    res$id_match <- paste0(res$id, "_", res$tuqtl_gene_name, "_", res$tuqtl_molecular_trait_id)
+    colnames(res) <- gsub("tuqtl", "eqtl", colnames(res))
+  } else {
+    res$id <- sapply(res$sqtl_data, function(x) sub("GTEx_v8_sqtl_splicing_", "", x))
+    res$id_match <- paste0(res$id, res$sqtl_gene_name)
+    colnames(res) <- gsub("sqtl", "eqtl", colnames(res))
+  }
+
+  # filter to take best probe = probe with min lead_gwas_variant_eqtl_pval => not needed
+  # only one probe per gene in condmask files (i.e., only one probe per gene for coloc test anyway)
+  id <- paste0(res$eqtl_data, "_", res$eqtl_gene_name, "_", res$eqtl_molecular_trait_id, "_", res$hit2)
+  stopifnot(length(unique(id)) == length(id))
+  rm(id)
+  
+  # filter to take best indep signal = hit2 with max pp4
+  res <- res %>% 
+    group_by(id_match) %>% 
+    mutate(max_pp4 = max(PP.H4.abf)) %>%
+    # arrange(desc(PP.H4.abf), .by_group = TRUE) %>% 
+    ungroup() %>% 
+    # distinct(eqtl_gene_name, eqtl_data, .keep_all = TRUE) %>% 
+    select(-starts_with("coloc_")) %>% 
+    data.frame()
+  return(res)
+})
+names(res_condmask_list) <- qtl_analysis
+
+```
+
+
+## Summary of the results
+
+#### P-value based lookup
+
+What's the eQTL P-value of the lead sVariant/tuVariant and lead GWAS variant (`r lead_gwas`) in various studies from the eQTL Catalogue and GTEx?
+
+```{r}
+i <- 1
+```
+
+* `r names(res_list)[i]`
+
+```{r fig-gwas-hit-eqtl-pval-heatmap-gtex-splicing, fig.width=12, fig.height=4}
+res <- res_list[[i]]
+plot_data <- res %>%
+  select(eqtl_gene_name, id, lead_gwas_variant_eqtl_pval) %>%
+  mutate(pval = -log10(lead_gwas_variant_eqtl_pval)) %>%
+  pivot_wider(-lead_gwas_variant_eqtl_pval, names_from = id, values_from = pval) %>%
+  tibble::column_to_rownames(var = "eqtl_gene_name") %>% 
+  as.matrix()
+
+pheatmap(mat = plot_data[c("LIMD1", "SACM1L", "SLC6A20", "LZTFL1", "CCR9", "FYCO1", "CXCR6", "XCR1"), ],
+         scale = "none",
+         color = viridis::viridis(100),
+         na_col = "grey95",
+         cluster_rows = F, cluster_cols = F,
+         main = names(res_list)[i])
+
+#ggplot(data = res, aes(x = eqtl_gene_name, y = eqtl_data, fill = -log10(lead_gwas_variant_eqtl_pval))) + 
+#  geom_tile()
+
+```
+
+```{r}
+i <- 2
+```
+
+* `r names(res_list)[i]`
+
+```{r fig-gwas-hit-eqtl-pval-heatmap-eqtl-catalogue-tx, fig.width=14, fig.height=5}
+res <- res_list[[i]]
+plot_data <- res %>%
+  select(eqtl_gene_name, id, lead_gwas_variant_eqtl_pval) %>%
+  mutate(pval = -log10(lead_gwas_variant_eqtl_pval)) %>%
+  pivot_wider(-lead_gwas_variant_eqtl_pval, names_from = id, values_from = pval) %>%
+  tibble::column_to_rownames(var = "eqtl_gene_name") %>% 
+  as.matrix()
+
+pheatmap(mat = plot_data[c("LIMD1", "SACM1L", "SLC6A20", "LZTFL1", "CCR9", "FYCO1", "CXCR6", "XCR1"), ],
+         scale = "none",
+         color = viridis::viridis(100),
+         na_col = "grey95",
+         cluster_rows = F, cluster_cols = T,
+         main = names(res_list)[i])
+
+#ggplot(data = res, aes(x = eqtl_gene_name, y = eqtl_data, fill = -log10(lead_gwas_variant_eqtl_pval))) + 
+#  geom_tile()
+
+```
+
+
+```{r}
+i <- 3
+```
+
+* `r names(res_list)[i]`
+
+```{r fig-gwas-hit-eqtl-pval-heatmap-eqtl-catalogue-txrev, fig.width=16, fig.height=5.5}
+for (g in c("upstream", "contained", "downstream")) {
+  res <- res_list[[i]]
+  res <- res[grepl(g, res$eqtl_molecular_trait_id),]
+  
+  plot_data <- res %>%
+    select(eqtl_gene_name, id, lead_gwas_variant_eqtl_pval) %>%
+    mutate(pval = -log10(lead_gwas_variant_eqtl_pval)) %>%
+    pivot_wider(-lead_gwas_variant_eqtl_pval, names_from = id, values_from = pval) %>%
+    tibble::column_to_rownames(var = "eqtl_gene_name") %>% 
+    as.matrix()
+  
+  # "contained" is missing CXCR6
+  if (g == "contained") {
+    plot_data <- rbind(plot_data, "CXCR6" = NA)
+  }
+  
+  # ""downstream" is missing CXCR6
+  if (g == "downstream") {
+    plot_data <- rbind(plot_data, "XCR1" = NA)
+  }
+  
+  pheatmap(mat = plot_data[c("LIMD1", "SACM1L", "SLC6A20", "LZTFL1", "CCR9", "FYCO1", "CXCR6", "XCR1"), ],
+           scale = "none",
+           color = viridis::viridis(100),
+           na_col = "grey95",
+           cluster_rows = F, cluster_cols = T,
+           main = paste0(names(res_list)[i], " - ", g))
+}
+
+```
+
+#### Summary of coloc-standard
+
+```{r}
+i <- 1
+```
+
+* `r names(res_list)[i]`
+
+```{r fig-summary-coloc-gtex-splicing, fig.width=17, fig.height=12}
+res <- res_list[[i]]
+
+res %>%
+  filter(!is.na(coloc_pp4)) %>% 
+  pivot_longer(cols = starts_with("coloc_p"), names_to = "coloc_hyp", values_to = "coloc_pp") %>% 
+  mutate(coloc_hyp = sub("coloc_pp", "H", coloc_hyp)) %>% 
+  mutate(study = sub("_sqtl_splicing_", "\n", eqtl_data)) %>% 
+  mutate(study = sub("_microarray_", "\n", study)) %>% 
+  mutate(gene_name_f = factor(eqtl_gene_name, levels = c("LIMD1", "SACM1L", "SLC6A20", "LZTFL1", "CCR9", "FYCO1", "CXCR6", "XCR1"))) %>% 
+  ggplot(aes(x = gene_name_f, y = coloc_pp, fill = coloc_hyp)) +
+  labs(title = names(res_list)[i],
+       x = "Gene name",
+       y = "Posterior probability from coloc",
+       fill = "Coloc hypothesis") +
+  geom_col() +
+  facet_wrap(~study, ncol = 7) +
+  theme(legend.position = "top",
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+```
+
+```{r}
+i <- 2
+```
+
+* `r names(res_list)[i]`
+
+```{r fig-summary-coloc-eqtl-catalogue-tx, fig.width=17, fig.height=16}
+res <- res_list[[i]]
+
+res %>%
+  filter(!is.na(coloc_pp4)) %>% 
+  pivot_longer(cols = starts_with("coloc_p"), names_to = "coloc_hyp", values_to = "coloc_pp") %>% 
+  mutate(coloc_hyp = sub("coloc_pp", "H", coloc_hyp)) %>% 
+  mutate(study = sub("_tx_", "\n", eqtl_data)) %>% 
+  mutate(gene_name_f = factor(eqtl_gene_name, levels = c("LIMD1", "SACM1L", "SLC6A20", "LZTFL1", "CCR9", "FYCO1", "CXCR6", "XCR1"))) %>% 
+  ggplot(aes(x = gene_name_f, y = coloc_pp, fill = coloc_hyp)) +
+  labs(title = names(res_list)[i],
+       x = "Gene name",
+       y = "Posterior probability from coloc",
+       fill = "Coloc hypothesis") +
+  geom_col() +
+  facet_wrap(~study, ncol = 7) +
+  theme(legend.position = "top",
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+```
+
+```{r}
+i <- 3
+```
+
+* `r names(res_list)[i]`
+
+```{r fig-summary-coloc-eqtl-catalogue-txrev, fig.width=17, fig.height=17}
+for (g in c("upstream", "contained", "downstream")) {
+  res <- res_list[[i]]
+  res <- res[grepl(g, res$eqtl_molecular_trait_id),]
+  
+  p <- res %>%
+    filter(!is.na(coloc_pp4)) %>% 
+    pivot_longer(cols = starts_with("coloc_p"), names_to = "coloc_hyp", values_to = "coloc_pp") %>% 
+    mutate(coloc_hyp = sub("coloc_pp", "H", coloc_hyp)) %>% 
+    mutate(study = sub("_txrev_", "\n", eqtl_data)) %>% 
+    mutate(gene_name_f = factor(eqtl_gene_name, levels = c("LIMD1", "SACM1L", "SLC6A20", "LZTFL1", "CCR9", "FYCO1", "CXCR6", "XCR1"))) %>% 
+    ggplot(aes(x = gene_name_f, y = coloc_pp, fill = coloc_hyp)) +
+    labs(title = paste0(names(res_list)[i], " - ", g),
+         x = "Gene name",
+         y = "Posterior probability from coloc",
+         fill = "Coloc hypothesis") +
+    geom_col() +
+    facet_wrap(~study, ncol = 7) +
+    theme(legend.position = "top",
+          axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+  print(p)
+}
+  
+```
+
+#### Summary coloc-condmask
+
+__Compare coloc-standard and coloc-condmask results__
+
+```{r fig-compare-coloc, fig.width=4.5, fig.height=4.5, out.width='33%'}
+# GTEx - splicing -------------------
+i = 1
+stand <- res_list[[qtl_analysis[i]]]
+stand <- stand[!is.na(stand$coloc_pp4),]
+stopifnot(length(unique(stand$id_match)) == nrow(stand))
+
+condmask <- res_condmask_list[[qtl_analysis[i]]] %>% 
+  group_by(eqtl_data, eqtl_gene_name) %>% 
+  arrange(desc(PP.H4.abf), .by_group = TRUE) %>% 
+  ungroup() %>% 
+  distinct(eqtl_gene_name, eqtl_data, .keep_all = TRUE) %>% 
+  data.frame()
+stopifnot(length(unique(condmask$id_match)) == nrow(condmask))
+
+id <- intersect(stand$id_match, condmask$id_match)
+
+plot(stand[match(id, stand$id_match), "coloc_pp4"], condmask[match(id, condmask$id_match), "PP.H4.abf"],
+     xlab = "PP4 from coloc-standard", ylab = "Max PP4 from coloc-condmask",
+     xlim = c(0, 1), ylim = c(0, 1),
+     main = qtl_analysis[i])
+abline(0, 1, col = "royalblue")
+
+# eQTL Catalogue - tx -------------------
+i = 2
+stand <- res_list[[qtl_analysis[i]]]
+stand <- stand[!is.na(stand$coloc_pp4),]
+stopifnot(length(unique(stand$id_match)) == nrow(stand))
+
+condmask <- res_condmask_list[[qtl_analysis[i]]] %>% 
+  group_by(eqtl_data, eqtl_gene_name) %>% 
+  arrange(desc(PP.H4.abf), .by_group = TRUE) %>% 
+  ungroup() %>% 
+  distinct(eqtl_gene_name, eqtl_data, .keep_all = TRUE) %>% 
+  data.frame()
+stopifnot(length(unique(condmask$id_match)) == nrow(condmask))
+
+id <- intersect(stand$id_match, condmask$id_match)
+
+plot(stand[match(id, stand$id_match), "coloc_pp4"], condmask[match(id, condmask$id_match), "PP.H4.abf"],
+     xlab = "PP4 from coloc-standard", ylab = "Max PP4 from coloc-condmask",
+     xlim = c(0, 1), ylim = c(0, 1),
+     main = qtl_analysis[i])
+abline(0, 1, col = "royalblue")
+
+# eQTL Catalogue - txrev -------------------
+i = 3
+stand <- res_list[[qtl_analysis[i]]]
+stand <- stand[!is.na(stand$coloc_pp4),]
+stopifnot(length(unique(stand$id_match)) == nrow(stand))
+
+condmask <- res_condmask_list[[qtl_analysis[i]]] %>% 
+  group_by(id_match) %>% 
+  arrange(desc(PP.H4.abf), .by_group = TRUE) %>% 
+  ungroup() %>% 
+  distinct(eqtl_gene_name, eqtl_data, id_match, .keep_all = TRUE) %>% 
+  data.frame()
+stopifnot(length(unique(condmask$id_match)) == nrow(condmask))
+
+id <- intersect(stand$id_match, condmask$id_match)
+
+plot(stand[match(id, stand$id_match), "coloc_pp4"], condmask[match(id, condmask$id_match), "PP.H4.abf"],
+     xlab = "PP4 from coloc-standard", ylab = "Max PP4 from coloc-condmask",
+     xlim = c(0, 1), ylim = c(0, 1),
+     main = qtl_analysis[i])
+abline(0, 1, col = "royalblue")
+
+```
+

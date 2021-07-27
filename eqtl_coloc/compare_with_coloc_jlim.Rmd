@@ -1,0 +1,238 @@
+---
+title: "Colocalization analysis of chr3 COVID-19 GWAS eQTLs - JLIM"
+author: "Silva Kasela"
+date: "5/11/2021"
+output:
+  html_document:
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.path = here::here("covid_gwas", "freeze5", "chr3_coloc", "fig_jlim/"), dev = c('png', 'pdf'))
+
+library(here)
+library(dplyr)
+library(ggplot2)
+
+# set theme using the setup chunk
+theme_set(theme_classic() +
+          theme(plot.title = element_text(size = 14),
+	              plot.subtitle = element_text(size = 12),
+                axis.title = element_text(size = 12),
+                axis.title.y = element_text(vjust = 2),
+                axis.title.x = element_text(vjust = -0.75),
+                axis.text = element_text(size = 11),
+                strip.text = element_text(size = 11),
+                legend.title = element_text(size = 12),
+                legend.text = element_text(size = 11)))
+
+```
+
+Results of colocalization analysis with JLIM
+
+To match the study populations, using eQTL summary stats from analysis using individuals of European ancestry
+
+* GTEx v8 EUR eQTLs and eQTLs from the eQTL Catalogue
+    + Note: some studies from the eQTL Catalogue are multi-ethnic
+* COVID-19 GWASes used: C2_ALL_eur B2_ALL_eur
+
+```{r}
+gwas <- c("B2_ALL_eur", "C2_ALL_eur")
+
+gene_df <- data.frame("gene_id" = c("ENSG00000144791.9", "ENSG00000211456.10", "ENSG00000163817.15", "ENSG00000163818.16", "ENSG00000173585.15", "ENSG00000163820.14", "ENSG00000172215.5", "ENSG00000173578.7"),
+                      "gene_id_1" = c("ENSG00000144791", "ENSG00000211456", "ENSG00000163817", "ENSG00000163818", "ENSG00000173585", "ENSG00000163820", "ENSG00000172215", "ENSG00000173578"),
+                      "gene_name" = c("LIMD1", "SACM1L", "SLC6A20", "LZTFL1", "CCR9", "FYCO1", "CXCR6", "XCR1"),
+                      stringsAsFactors = F)
+
+```
+
+
+Calculating LD based on the EUR subpopulation from the 1000G Project
+
+## JLIM results using eQTLs from GTEx and the eQTL Catalogue
+
+```{r}
+dat <- lapply(gwas, function(x) {
+  d <- lapply(c("GTEx_v8", "eQTL_catalogue"), function(y) {
+    files <- list.files(here("covid_gwas", "freeze5", "chr3_coloc", "result_jlim", y), pattern = x)
+    d <- lapply(files, function(f) {
+      d <- read.table(here("covid_gwas", "freeze5", "chr3_coloc", "result_jlim", y,  f), header = T, sep = "\t", stringsAsFactors = F)
+      d$gwas_data <- x
+      d$eqtl_data <- sub(".out", "", sub("_", "", unlist(strsplit(f, y))[2]))
+      if (y == "GTEx_v8") {
+        d$eqtl_data <- paste0("GTEx_v8_ge_", d$eqtl_data)
+        d$eqtl_gene_id <- d$sectrGeneName
+        d$eqtl_molecular_trait_id <- NA
+        d <- d[d$eqtl_gene_id %in% gene_df$gene_id, ]
+        d$eqtl_gene_name <- gene_df[match(d$eqtl_gene_id, gene_df$gene_id), "gene_name"]
+        d$id <- paste0(d$eqtl_data, "_", d$eqtl_gene_name)
+        d$id_long <- d$id
+      } else {
+        if (grepl("microarray", f)) {
+          d$eqtl_gene_id <- sapply(d$sectrGeneName, function(x) unlist(strsplit(x, "-"))[2])
+          d$eqtl_molecular_trait_id <- sapply(d$sectrGeneName, function(x) unlist(strsplit(x, "-"))[1])
+        } else {
+          d$eqtl_gene_id <- d$sectrGeneName
+          d$eqtl_molecular_trait_id <- NA
+        }
+        d <- d[d$eqtl_gene_id %in% gene_df$gene_id_1, ]
+        d$eqtl_gene_name <- gene_df[match(d$eqtl_gene_id, gene_df$gene_id_1), "gene_name"]
+        d$id <- paste0(d$eqtl_data, "_", d$eqtl_gene_name)
+        d$id_long <- ifelse(!is.na(d$eqtl_molecular_trait_id), paste0(d$id, "-", d$eqtl_molecular_trait_id), d$id)
+      }
+      return(d)
+    })
+    d <- do.call(rbind, d)
+    
+    # Calculate log_p
+    # Note that JLIM reports an empirical pvalue of 0 when a sampled null distribution does not produce a statistic as or more extreme than the actual statistic. In such a case, the expectation of true p-value is less than 1 over executedPerm (the total count of permutation/sampling), namely, 1/10,000 in this example.
+    d$log10_pval <- ifelse(d$pvalue == 0, log10(1/d$executedPerm), log10(d$pvalue))
+  
+    # Save dataframe
+    write.table(d, file = here("covid_gwas", "freeze5", "chr3_coloc", "result_jlim", paste0("summary_jlim.", x, ".", y, ".txt")), col.names = T, row.names = F, sep = "\t", quote = F)
+    return(d)
+  })
+  d <- do.call(rbind, d)
+  write.table(d, file = here("covid_gwas", "freeze5", "chr3_coloc", "result_jlim", paste0("suppl_table_jlim_results.", x, ".txt")), col.names = T, row.names = F, sep = "\t", quote = F)
+  
+  # Return dataframe
+  return(d)
+})
+
+names(dat) <- gwas
+
+```
+
+#### JLIM p-value
+
+```{r}
+# Coloc was run if there's eQTL variants with P-value < 10-4 within 100kb of the GWAS variant
+p_th <- 1e-04
+
+```
+
+* Genes with lead eQTL p-value > `r p_th` are colored in grey
+    + Note that these genes were left out from coloc analysis
+
+```{r fig-jlim-eqtl, fig.width=8, fig.height=5, out.width='75%'}
+for (i in 1:length(dat)) {
+  cat(names(dat)[i], fill = TRUE)
+  x <- dat[[i]]
+  n <- length(unique(x$eqtl_data))
+  cat("Number of unique eQTL studies - ", n, fill = TRUE)
+  print(summary(x$pvalue))
+  # x[x$eqtl_data %in% "Schmiedel_2018_ge_Tfh_memory",]
+  
+  plot_x <- x %>% 
+    mutate(eqtl_gene_name = factor(eqtl_gene_name, levels = gene_df$gene_name))
+  
+  g <- ggplot(data = plot_x, aes(x = eqtl_gene_name, y = -log10_pval)) +
+    labs(title = paste0("COVID-19 GWAS - ", names(dat)[i]),
+         subtitle = paste0("Significance cut-off: p = 0.05/", n),
+         y = "-log10(JLIM P-value)",
+         x = "") +
+    geom_point() +
+    ggrepel::geom_text_repel(data = filter(plot_x, pvalue < 0.05/8 & sectrMinAssocPvalue < p_th), aes(label = id), color = "royalblue", size = 3) +
+    ggrepel::geom_text_repel(data = filter(plot_x, pvalue < 0.05/8 & sectrMinAssocPvalue >= p_th), aes(label = id), color = "grey50", size = 3) +
+    geom_hline(yintercept = -log10(0.05/n), lty = 2, col = "royalblue") +
+    geom_hline(yintercept = -log10(0.05/8), lty = 3, col = "royalblue") +
+    geom_text(aes(x = 1, y = -log10(0.05/n)), label = paste0("P = 0.05/", n), vjust = 1) +
+    geom_text(aes(x = 1, y = -log10(0.05/8)), label = "P = 0.05/8", vjust = 1) +
+    scale_y_continuous(limits = c(0, 4.1))
+  print(g)
+
+}
+
+```
+
+Compare JLIM results for B2 and C2:
+
+```{r fig-compare-jlim-eqtl, fig.width=5, fig.height=5, out.width='50%'}
+for (i in 1:length(dat)) {
+  x <- dat[[i]]
+  for (j in 1:length(dat)) {
+    if (j != i) {
+      y <- dat[[j]]
+      #stopifnot(x$id %in% y$id)
+      ids <- intersect(x$id, y$id)
+      plot(-log10(x[match(ids, x$id), "pvalue"]), -log10(y[match(ids, y$id), "pvalue"]),
+           xlab = paste0(names(dat)[i], " -log10(P-value)"), ylab = paste0(names(dat)[j], " -log10(P-value)"),
+           main = paste0(names(dat)[i], " VS ", names(dat)[j]))
+      abline(0, 1)
+    }
+  }
+}
+
+```
+
+## Compare Freeze 5 coloc and JLIM results
+
+```{r}
+dat_coloc <- lapply(gwas, function(x) {
+  d <- lapply(c("GTEx_v8", "eQTL_catalogue"), function(y) read.table(here("covid_gwas", "freeze5", "chr3_coloc", "result", paste0("summary_coloc.", x, ".", y, ".txt")), header = T, sep = "\t", stringsAsFactors = F))
+  d <- do.call(rbind, d)
+  d$id <- paste0(d$eqtl_data, "_", d$eqtl_gene_name)
+  d$id_long <- ifelse(!is.na(d$eqtl_molecular_trait_id), paste0(d$id, "-", d$eqtl_molecular_trait_id), d$id)
+  return(d)
+})
+names(dat_coloc) <- gwas
+
+```
+
+#### `r paste(gwas, collapse = ", ")`
+
+```{r compare-coloc-jlim, fig.width=5, fig.height=5, out.width='60%'}
+for (i in 1:length(dat)) {
+  jlim <- dat[[i]]
+  cat("Number of rows in JLIM - ", nrow(jlim), fill = TRUE)
+  coloc <- dat_coloc[[i]]
+  # Exclude genes that are not expressed from coloc results files (not present in JLIM files already)
+  coloc <- coloc[!is.na(coloc$eqtl_n), ]
+  cat("Number of rows in JLIM - ", nrow(coloc), fill = TRUE)
+  
+  cat("Are all the gene-tissue pairs from coloc present in the JLIM results:", fill = TRUE)
+  print(table(coloc$id_long %in% jlim$id_long))
+  if (sum(!coloc$id_long %in% jlim$id_long) > 0) {
+    print(coloc[!coloc$id_long %in% jlim$id_long, ])
+    coloc <- coloc[!!coloc$id_long %in% jlim$id_long,]
+  }
+  
+  # For microarray study select the probe that was selected to be the representative in coloc study
+  id_long <- intersect(coloc$id_long, jlim$id_long)
+  jlim <- jlim[match(id_long, jlim$id_long), ]
+  coloc <- coloc[match(id_long, coloc$id_long), ]
+  cat("----------------------", fill = TRUE)
+  print(table("Missing JLIM P-value" = is.na(jlim$pvalue), "Missing coloc PP4" = !is.na(coloc$coloc_pp4)))
+  print(table("JLIM P-value < 0.05" = jlim$pvalue < 0.05, "coloc PP4 > 0.5" = coloc$coloc_pp4 > 0.5, useNA = "ifany"))
+  print(table("JLIM P-value < 0.05/8" = jlim$pvalue < 0.05/8, "coloc PP4 > 0.5" = coloc$coloc_pp4 > 0.5, useNA = "ifany"))
+  # Lead eQTL p-value > 0.001 for these cases
+  #jlim[!is.na(jlim$pvalue) & jlim$pvalue < 0.05/8 & is.na(coloc$coloc_pp4),]
+  #coloc[!is.na(jlim$pvalue) & jlim$pvalue < 0.05/8 & is.na(coloc$coloc_pp4),]
+  
+  jlim$id <- NULL
+  jlim$eqtl_data <- NULL
+  jlim$eqtl_gene_name <- NULL
+  jlim$eqtl_gene_id <- NULL
+  jlim$eqtl_molecular_trait_id <- NULL
+  jlim$id_long <- NULL
+  
+  mdat <- cbind(jlim, coloc)
+  
+  #plot(-log10(mdat$sectrMinAssocPvalue), -log10(mdat$lead_eqtl_pval))
+  #abline(0,1)
+  
+  labels <- mdat %>% 
+    filter(coloc_pp4 > 0.5 | pvalue < 0.05/8)
+  
+  g <- ggplot(data = mdat, aes(x = coloc_pp4, y = -(log10_pval))) +
+    labs(title = gwas[i]) +
+    geom_point() +
+    geom_vline(xintercept = 0.5, lty = 2, col = "grey50") +
+    geom_hline(yintercept = -log10(0.05/8), lty = 2, col = "grey50") +
+    ggrepel::geom_text_repel(data = labels, aes(label = id), color = "royalblue", size = 3) +
+    scale_x_continuous(limits = c(0, 1))
+  print(g)
+}
+  
+```
+

@@ -1,11 +1,16 @@
 #!/usr/bin/env Rscript
 #-------------------------------------------------------
 # Colocalization analysis for COVID-19 GWAS (freeze 5)
-# and molQTLs from the eQTL Catalogue or GTEx v8
+# and eQTLs from the eQTL Catalogue or GTEx v8
+#   * Using coloc-cond/mask
 #-------------------------------------------------------
 
-# Idea: run coloc between COVID-19 GWAS and molQTLs, if there's an eVariant within 100kb of the GWAS variant with nominal p-value < 10-4
-# Run coloc in a 1Mb region centered on the lead GWAS variant, if more than 100 variants in the coloc-region
+# Idea: run coloc between COVID-19 GWAS and eQTLs, if there's an eVariant within 100kb of the GWAS variant with nominal p-value < 10-4
+# Run coloc-condmask in a 2Mb region centered on the lead GWAS variant
+
+# Use conditioning on GTEx v8 data
+# Masking on eQTL Catalogue data, LD data from 1000G EUR population
+# Method = 'single' for GWAS
 
 library(here)
 library(data.table)
@@ -14,6 +19,12 @@ library(dplyr)
 library(ggplot2)
 library(patchwork)
 library(coloc)
+
+# Source functions fro coloc-cond/mask
+source(here("eqtl_coloc", "functions_run_coloc.R"))
+source(here("eqtl_coloc", "functions_plot_locus.R")
+source(here("eqtl_coloc", "functions_get_genomatrix.R")
+source(here("eqtl_coloc", "functions_coloc_signals_adj.R")
 
 # ggplot2 theme
 theme_set(theme_classic() +
@@ -34,8 +45,19 @@ print(eqtls)
 gwas_analysis <- args[2] # "B2_ALL_leave_23andme", "C2_ALL_leave_23andme"
 print(gwas_analysis)
 
-# Running coloc in a 1Mb region centered at the lead GWAS variant (+/- 500kb from the SNP)
-window <- 500000
+# coloc-cond/mask
+coloc <- "condmask"
+print(coloc)
+if (eqtls %in% "GTEx_v8") {
+  QTL_COLOC <- 'beta,cond'
+} else {
+  QTL_COLOC <- 'beta,mask'
+}
+GWAS_COLOC <- "beta,single"
+COLOC_MODE <- "iterative"
+
+# Running coloc in a 2Mb region centered at the lead GWAS variant (+/- 1Mb from the SNP)
+window <- 1e+06
 pval_th <- 1e-4
 distance_th <- 100000
 
@@ -134,14 +156,15 @@ res <- data.frame("gwas" = rep(gwas_analysis, ifelse(grepl("txrev", eqtls), 3000
                   "lead_eqtl_beta" = NA,
                   "lead_eqtl_se" = NA,
                   "lead_gwas_variant_eqtl_pval" = NA,
-                  "coloc_nsnps" = NA,
-                  "coloc_pp0" = NA,
-                  "coloc_pp1" = NA,
-                  "coloc_pp2" = NA,
-                  "coloc_pp3" = NA,
-                  "coloc_pp4" = NA,
+                  #"coloc_nsnps" = NA,
+                  #"coloc_pp0" = NA,
+                  #"coloc_pp1" = NA,
+                  #"coloc_pp2" = NA,
+                  #"coloc_pp3" = NA,
+                  #"coloc_pp4" = NA,
                   stringsAsFactors = F)
 
+coloc_result <- list()
 k <- 1
 for (i in 1:nrow(tabix_paths)) {
   ftp_path =  tabix_paths$ftp_path[i]
@@ -152,20 +175,6 @@ for (i in 1:nrow(tabix_paths)) {
 
     #stopifnot(ncol(eqtl_data) == length(column_names))
     #colnames(eqtl_data) <- column_names
-
-    ## For txrevise events, choosing one of the molecular_trait_id to represent the gene
-    #if (eqtls %in% c("eQTL_catalogue_tx", "eQTL_catalogue_txrev")) {
-    #  f <- sub("all.tsv", "permuted.tsv", ftp_path)
-    #  if (grepl("GEUVADIS", tabix_paths$ftp_path[i])) {
-    #    f <- sub("_tx_|_txrev_", ".", f)
-    #  }
-    #  permuted <- data.table::fread(f, header = T, sep = "\t", stringsAsFactors = F, data.table = F)
-    #  permuted$gene_id <- sapply(permuted$molecular_trait_object_id, function(x) unlist(strsplit(x, "[.]"))[1])
-    #  permuted <- permuted[permuted$gene_id %in% gene_df$gene_id,]
-    #  stopifnot(permuted$molecular_trait_id %in% eqtl_data$molecular_trait_id)
-    #  eqtl_data <- eqtl_data[eqtl_data$molecular_trait_id %in% permuted$molecular_trait_id, ]
-    #  rm(permuted)
-    #}
 
   } else {
     eqtl_range <- paste0("chr", gwas_chr, ":",  gwas_pos - 1.5e6, "-", gwas_pos + 1.5e6)
@@ -203,7 +212,7 @@ for (i in 1:nrow(tabix_paths)) {
     filter(gene_id %in% gene_df$gene_id) %>%
     mutate(gene_name = gene_df[match(gene_id, gene_df$gene_id), "gene_name"])
 
-  if (tabix_paths$quant_method[i] %in% c("ge", "splicing")) {
+  if (tabix_paths$quant_method[i] %in% "ge") {
     eqtl_data <- eqtl_data %>%
       mutate(trait_id = gene_name) %>%
       mutate(trait_id_f = factor(trait_id, levels = gene_df$gene_name))
@@ -221,38 +230,6 @@ for (i in 1:nrow(tabix_paths)) {
       mutate(trait_id = paste0(gene_name, "-", molecular_trait_id)) %>%
       mutate(trait_id_f = factor(trait_id, levels = comb))
   }
-
-  # Figure
-  x_points <- seq(round(gwas_pos - 1e6, -6), gwas_pos + 1e6, 1e6/2) # define x-axis breaks
-  top_variant <- eqtl_data %>%
-    filter(variant %in% lead_gwas_id)
-
-  # individual y_max => need to create blank data
-  min_p <- tapply(eqtl_data$pvalue, eqtl_data$trait_id, min)
-  min_p <- min_p[levels(eqtl_data$trait_id_f)]
-  blank_data <- data.frame(position = gwas_pos,
-                           pvalue = c(ifelse(min_p > 10**-6 | is.na(min_p) , 10**-6, min_p), rep(1, length(min_p))),
-                           trait_id_f = factor(rep(levels(eqtl_data$trait_id_f), 2), levels = levels(eqtl_data$trait_id_f)),
-                           stringsAsFactors = F)
-
-  # ncol and width
-  ncol <- ifelse(length(levels(eqtl_data$trait_id_f)) %% nrow(gene_df) == 0,
-                 length(levels(eqtl_data$trait_id_f)) / nrow(gene_df), trunc(length(levels(eqtl_data$trait_id_f)) / nrow(gene_df)) + 1)
-  width <- ifelse(ncol > 1, 3*ncol*0.9, 3)
-
-  g <- ggplot(eqtl_data, aes(x = position, y = -log10(pvalue))) +
-    labs(title = tabix_paths$study[i],
-         subtitle = paste0(tabix_paths$qtl_group[i], " (", tabix_paths$quant_method[i], ")"),
-         x = paste0("Position on chr", gwas_chr, " (Mb)"),
-         y = bquote(-log[10] ~ "(eQTL P-value)")) +
-    geom_point(col = "grey20") +
-    geom_hline(yintercept = -log10(1e-4), col = "indianred", lty = 2) +
-    geom_point(data = top_variant, col = "mediumorchid1") +
-    geom_blank(data = blank_data) +
-    scale_x_continuous(breaks = x_points, labels = x_points/1e6, expand = expansion(mult = c(0.01, 0.01), add = c(0, 0))) +
-    scale_y_continuous(expand = expansion(mult = c(0.05, 0.2), add = c(0, 0))) +
-    facet_wrap(~trait_id_f, drop = FALSE, nrow = nrow(gene_df), scales = "free_y")
-  ggsave(here("covid_gwas", "freeze5", "chr3_coloc", "fig_cis_region", paste0(paste(tabix_paths[i, c("study", "quant_method", "qtl_group")], collapse = "_"), ".png")), g, width = width, height = 12)
 
   trait_id <- levels(eqtl_data$trait_id_f)
   # Run gene by gene (gene-molecular trait if microarray)
@@ -332,84 +309,67 @@ for (i in 1:nrow(tabix_paths)) {
 
         # eQTL variants with P-value < 10-4 within 100kb of the GWAS variant
         if (nrow(min_p_check) > 0) {
-          res_coloc <- coloc.abf(dataset1 = list(beta = mdata$all_inv_var_meta_beta,
-                                                 varbeta = mdata$all_inv_var_meta_sebeta**2,
-                                                 type = mdata$gwas_type[1],
-                                                 s = mdata$gwas_s[1],
-                                                 N = mdata$gwas_n[1]),
-                                 dataset2 = list(beta = mdata$beta,
-                                                 varbeta = mdata$se**2,
-                                                 type = "quant",
-                                                 MAF = mdata$maf,
-                                                 N = ifelse(grepl("eQTL_catalogue", eqtls), tabix_paths$sample_size[i], tabix_paths$eqtl_n[i])),
-                                 p1 = 1e-4, p2 = 1e-4, p12 = 5e-6)
+          # coloc-condmask
+          mdata$phenotype_id <- mdata$trait_id
+          mdata$id <- sapply(mdata$variant, function(x) paste(unlist(strsplit(x, "_"))[1:2], collapse = "_"))
 
-          res$coloc_nsnps[k] <- res_coloc$summary["nsnps"]
-          res$coloc_pp0[k] <- res_coloc$summary["PP.H0.abf"]
-          res$coloc_pp1[k] <- res_coloc$summary["PP.H1.abf"]
-          res$coloc_pp2[k] <- res_coloc$summary["PP.H2.abf"]
-          res$coloc_pp3[k] <- res_coloc$summary["PP.H3.abf"]
-          res$coloc_pp4[k] <- res_coloc$summary["PP.H4.abf"]
+          mdata$gwas_pval <- mdata$all_inv_var_meta_p
+          mdata$gwas_beta <- mdata$all_inv_var_meta_beta
+          mdata$gwas_se <- mdata$all_inv_var_meta_sebeta
 
-          if (res_coloc$summary["PP.H4.abf"] > 0.25) {
-            qtl_type <- ifelse(grepl("sqtl", eqtls), "sQTL",
-                               ifelse(grepl("tx", eqtls), "tuQTL", "eQTL"))
-            # Locuscompare and locuszoom figures
-            lc <- ggplot(data = mdata, aes(x = -log10(all_inv_var_meta_p), y = -log10(pvalue))) +
-              labs(#title = paste0(gwas_analysis, " - ", trait_id_lookup),
-                   #subtitle = paste0(tabix_paths$study[i], " - ", tabix_paths$qtl_group[i], " (", tabix_paths$quant_method[i], ")"),
-                   x = bquote(-log[10] ~ "(GWAS P-value)"),
-                   y = bquote(-log[10] ~ "(" ~ .(qtl_type) ~ " P-value)")) +
-              geom_point(pch = 21)
+          mdata$qtl_pval <- mdata$pvalue
+          mdata$qtl_beta <- mdata$beta
+          mdata$qtl_se <- mdata$se
+          mdata$qtl_maf <- mdata$maf
+          mdata$qtl_n <- ifelse(grepl("eQTL_catalogue", eqtls), tabix_paths$sample_size[i], tabix_paths$eqtl_n[i])
 
-            x_points <- seq(round(gwas_pos - window, -5), gwas_pos + window, 2e5)
-            x_points <- x_points[x_points > gwas_pos - window & x_points < gwas_pos + window]
-            top_variant <- data.frame(POS = gwas_pos,
-                                      pval = as.numeric(mdata[mdata$SNP %in% lead_gwas, c("pvalue", "all_inv_var_meta_p")]),
-                                      group = c(qtl_type, "GWAS"),
-                                      stringsAsFactors = F)
+          mdata$chr <- mdata$chromosome
+          mdata$pos <- mdata$position
 
-            if (qtl_type %in% "eQTL") {
-              mdata_pivot <- mdata %>%
-                mutate(GWAS = all_inv_var_meta_p,
-                       eQTL = pvalue) %>%
-                tidyr::pivot_longer(cols = c("GWAS", "eQTL"), names_to = "group", values_to = "pval")
-            } else if (qtl_type %in% "sQTL") {
-              mdata_pivot <- mdata %>%
-                mutate(GWAS = all_inv_var_meta_p,
-                       sQTL = pvalue) %>%
-                tidyr::pivot_longer(cols = c("GWAS", "sQTL"), names_to = "group", values_to = "pval")
-            } else {
-              mdata_pivot <- mdata %>%
-                mutate(GWAS = all_inv_var_meta_p,
-                       tuQTL = pvalue) %>%
-                tidyr::pivot_longer(cols = c("GWAS", "tuQTL"), names_to = "group", values_to = "pval")
-            }
+          # Coloc mode
+          qtl_coloc_input <- unlist(strsplit(QTL_COLOC, ","))[1]
+          qtl_coloc_mode <- unlist(strsplit(QTL_COLOC, ","))[2]
+          gwas_coloc_input <- unlist(strsplit(GWAS_COLOC, ","))[1]
+          gwas_coloc_mode <- unlist(strsplit(GWAS_COLOC, ","))[2]
 
-            lz <- ggplot(data = mdata_pivot, aes(x = POS, y = -log10(pval))) +
-              labs(#title = tabix_paths$study[i],
-                  #subtitle = paste0(tabix_paths$qtl_group[i], " (", tabix_paths$quant_method[i], ")"),
-                  #subtitle = paste0("PP3 = ", signif(res_coloc$summary["PP.H3.abf"], 2),
-                  #                  ", PP4 = ", signif(res_coloc$summary["PP.H4.abf"], 2)),
-                  x = paste0("Position on chr", gwas_chr, " (Mb)"),
-                  y = bquote(-log[10] ~ "(P-value)")) +
-              geom_point(pch = 21) +
-              geom_point(data = top_variant, col = "purple", size = 1.5) +
-              facet_grid(group ~ ., scales = "free_y") +
-              scale_x_continuous(breaks = x_points, labels = x_points/1e6, expand = expansion(mult = c(0.01, 0.01), add = c(0, 0))) +
-              theme(plot.subtitle = element_text(size = 11))
-
-            fig <- lc + lz +
-              plot_annotation(tag_levels = 'A',
-                              title = paste0(gwas_analysis, " - ", qtl_type, "s for ", trait_id_lookup," from ", tabix_paths$study[i], " - ", tabix_paths$qtl_group[i], " (", tabix_paths$quant_method[i], ")"),
-                              subtitle = paste0("PP3 = ", signif(res_coloc$summary["PP.H3.abf"], 2), ", PP4 = ", signif(res_coloc$summary["PP.H4.abf"], 2)))
-            ggsave(here("covid_gwas", "freeze5", "chr3_coloc", paste0("fig_locusplot_", eqtls), paste0("locusplots.", gwas_analysis, ".", trait_id_lookup, "_", res$eqtl_data[k], ".pp4_", round(res_coloc$summary["PP.H4.abf"], 2), ".pdf")), plot = fig, width = 8, height = 4.5)
+          # LD data
+          if (grepl("GTEx_v8", eqtls)) {
+            gtex_cov <- read.table(paste0("~/gtex_v8/eqtl/GTEx_Analysis_v8_eQTL_covariates/", tabix_paths$qtl_group[i], ".v8.covariates.txt"), header = T, sep = "\t", stringsAsFactors = F, row.names = 1, nrows = 5)
+            INDIV <- colnames(gtex_cov)
+            GENOFILE <- "~/gtex_v8/genotypes/WGS/variant_calls/GTEx_Analysis_2017-06-05_v8_WholeGenomeSeq_838Indiv_Analysis_Freeze.SHAPEIT2_phased.vcf.gz"
           } else {
-            cat("PP4 < 0.25", fill = T)
+            mdata$variant_id <- paste0("chr", mdata$chromosome, "_", mdata$position, "_", mdata$ref, "_", mdata$alt, "_b38")
+            mdata$tss_distance <- NA
+
+            pop_1kg_eur <- read.table(here("covid_gwas", "freeze5", "chr3_coloc", "input", "ld0", "indiv_unrelated_1000g_eur.txt"), header = F, sep = "\t", stringsAsFactors = F)
+            cat("For LD using EUR population from 1000G", fill = T)
+            INDIV <- pop_1kg_eur$V1
+            GENOFILE <- paste0("~/lab/data/1kg/phase3_GRCh38/ALL.chr", gwas_chr, ".shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz")
           }
+
+          # paste0("fig_locusplot_", eqtls, "_condmask")
+          coloc_result[[k]] <- run_coloc(phenotype = trait_id_lookup, data = mdata,
+                                         qtl_coloc_input, qtl_coloc_mode,
+                                         gwas_coloc_input, gwas_coloc_mode,
+                                         genofile = GENOFILE, indiv = INDIV,
+                                         locuscompare = TRUE,
+                                         locuscompare_fig = here("covid_gwas", "freeze5", "chr3_coloc", "result_condmask", "fig_locuscompare", paste0("locuscompare.", gwas_analysis, ".", trait_id_lookup, "_", res$eqtl_data[k])),
+                                         locuszoom = TRUE,
+                                         locuszoom_fig = here("covid_gwas", "freeze5", "chr3_coloc", "result_condmask", "fig_locuszoom", paste0("locuszoom.", gwas_analysis, ".", trait_id_lookup, "_", res$eqtl_data[k])),
+                                         plot_main = paste0(gwas_analysis, " and ", trait_id_lookup, "\n", tabix_paths$study[i], " - ", tabix_paths$qtl_group[i], " (", tabix_paths$quant_method[i], ")"),
+                                         ld_show = TRUE, ld_variant = "qtl",
+                                         p1 = 1e-4, p2 = 1e-4, p12 = 5e-6,
+                                         pthr = 1e-04,
+                                         coloc_mode = COLOC_MODE,
+                                         sensitivity = FALSE,
+                                         qtl_trait = eqtls,
+                                         gwas_trait = gwas_analysis)
+
+          coloc_result[[k]] <- cbind((coloc_result[[k]])[, 1:13], res[k,])
+
         } else {
           cat("No eQTL variants with P-value < 10-4 within 100kb of the GWAS variant", fill = T)
-          }
+        }
       } else {
         cat("Less than 100 SNPs", fill = T)
       }
@@ -426,8 +386,7 @@ for (i in 1:nrow(tabix_paths)) {
   cat("-------------------------", fill = T)
 }
 
-res <- res %>%
-  filter(!is.na(eqtl_data))
+res <- do.call(rbind, coloc_result)
 
 # Modify column names for sQTL and txrev studies
 if (grepl("sqtl", eqtls)) {
@@ -437,6 +396,6 @@ if (grepl("tx", eqtls)) {
   colnames(res) <- gsub("eqtl", "tuqtl", colnames(res))
 }
 
-write.table(res, file = here("covid_gwas", "freeze5", "chr3_coloc", "result", paste0("summary_coloc.", gwas_analysis, ".", eqtls, ".txt")), col.names = T, row.names = F, sep = "\t", quote = F)
+write.table(res, file = here("covid_gwas", "freeze5", "chr3_coloc", "result_condmask", paste0("summary_coloc_condmask.", gwas_analysis, ".", eqtls, ".txt")), col.names = T, row.names = F, sep = "\t", quote = F)
 
 cat("Done!")

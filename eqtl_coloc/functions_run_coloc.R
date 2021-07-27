@@ -6,9 +6,9 @@
 # library(coloc)
 # library(ggplot2)
 
-# source(here("functions_coloc_signals_adj.R"))
-# source(here("functions_get_genomatrix.R"))
-# source(here("functions_plot_locus.R"))
+# source(here("eqtl_coloc", "functions_coloc_signals_adj.R"))
+# source(here("eqtl_coloc", "functions_get_genomatrix.R"))
+# source(here("eqtl_coloc", "functions_plot_locus.R"))
 
 ## Function for running coloc and making locuscompare figure and/or locuszoom
 
@@ -110,6 +110,7 @@ run_coloc <- function(phenotype, data,
       dat_2 <- list(snp = select$id, beta = select$qtl_beta, varbeta = select$qtl_se^2, type = "quant", sdY = select$qtl_sdY[1], N = select$qtl_n[1], MAF = select$qtl_maf, method = qtl_coloc_mode)
     } else {
     dat_2 <- list(snp = select$id, beta = select$qtl_beta, varbeta = select$qtl_se^2, type = "quant", N = select$qtl_n[1], MAF = select$qtl_maf, method = qtl_coloc_mode)
+    dat_2$sdY <- coloc:::sdY.est(dat_2$varbeta, dat_2$MAF, dat_2$N)
     }
   } else {
     dat_2 <- list(snp = select$id, pvalues = select$qtl_pval, type = "quant", N = select$qtl_n[1], MAF = select$qtl_maf, method = qtl_coloc_mode)
@@ -239,8 +240,8 @@ run_coloc <- function(phenotype, data,
       result <- result[match(names(finemapped_signals), result$hit2), ]
     }
 
-    # No locusplot if only one indep signals with PP4 < 0.2
-    if (sum(result[, "PP.H4.abf"] < 0.2) == 1 & nrow(result) == 1) {
+    # No locusplot if only one indep signals with PP4 < 0.5 OR no loci has PP4 > 0.5
+    if ( (sum(result[, "PP.H4.abf"] < 0.5) == 1 & nrow(result) == 1) | (sum(result[, "PP.H4.abf"] > 0.5) == 0) ) {
       locuscompare <- FALSE
       locuszoom <- FALSE
     }

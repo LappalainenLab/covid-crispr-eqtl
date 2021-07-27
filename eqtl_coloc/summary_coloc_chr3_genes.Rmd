@@ -1,12 +1,12 @@
 ---
-title: "Summary of eQTL associations on chr3 GWAS locus"
+title: "Summary of eQTL associations on chr3 GWAS locus - B2 analysis"
 author: "Silva Kasela"
-date: "7/20/2020"
+date: "6/20/2021"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, fig.path = here::here("eqtl_coloc", "fig_summary_coloc/"), dev = c('png', 'pdf'))
+knitr::opts_chunk$set(echo = FALSE, fig.path = here::here("covid_gwas", "freeze5", "chr3_coloc", "fig_summary_coloc_B2/"), dev = c('png', 'pdf'))
 options(knitr.table.format = "html") 
 
 library(here)
@@ -33,9 +33,16 @@ theme_set(theme_classic() +
 
 Can we detect colocalization signal between COVID-19 GWAS and eQTLs?
 
+```{r}
+gwas_analysis <- "B2_ALL_leave_23andme"
+lead_gwas <- "3:45823240:T:C"
+
+```
+
+
 Data
 
-* COVID19 HGI: ANA_C2_V2 - covid vs. population GWAS summary statistics
+* COVID-19 HGI (Freeze 5 data): `r gwas_analysis` - hospitalized covid vs. population GWAS summary statistics
 * eQTL Catalogue: eQTL summary statistics from various (immune) cell types
 * GTEx v8: eQTL summary statistics from 49 tissues
 
@@ -48,7 +55,7 @@ Run coloc between COVID-19 GWAS and eQTLs, if there’s an eVariant within 100kb
         * Priors used: `p1` = 1e-4, `p2` = 1e-4, `p12` = 5e-6
 * Coloc-cond/mask
     + Run coloc in a 2Mb-region centered on the lead GWAS variant (+/- 1Mb from the lead GWAS variant)
-    + Conditioning used for GTEx v8 with LD data from GTEx, masking used for eQTL catalogue data with LD from 1000G CEU population
+    + Conditioning used for GTEx v8 with LD data from GTEx, masking used for eQTL catalogue data with LD from 1000G EUR population
         * `p1` = 1e-4, `p2` = 1e-4, `p12` = 5e-6
         * `mode` = 'iterative', `pthr` = 1e-04 (P-value threshold for secondary signals), `r2thr` = 0.01 (LD threshold for masking), `maxhits` = 3
 
@@ -62,17 +69,19 @@ res_condmask_list <- list()
 # eQTL Catalogue studies - eQTL Catalogue
 tabix_paths <- read.table("https://raw.githubusercontent.com/eQTL-Catalogue/eQTL-Catalogue-resources/master/tabix/tabix_ftp_paths.tsv", sep = "\t", header = TRUE, stringsAsFactors = FALSE)
 tabix_paths <- tabix_paths %>%
-  filter(quant_method %in% c("ge", "microarray"))
+  filter(quant_method %in% c("ge", "microarray"),
+         !study %in% "GTEx")
 tabix_paths$id <- sapply(tabix_paths$ftp_path, function(x) unlist(strsplit(x, "/"))[11])
 tabix_paths$id <- sapply(tabix_paths$id, function(x) unlist(strsplit(x, "[.]"))[1])
-tabix_paths$id <- sapply(tabix_paths$id, function(x) sub("Fairfax_2014_", "Fairfax_2014_monocyte_", x))
+print(addmargins(table("eQTL Catalogue studies" = tabix_paths$quant_method)))
 
 # coloc-standard -------------------------
 # Results of coloc
-res <- read.table(here("eqtl_coloc", "summary_coloc_eQTL_catalogue.txt"), header = T, sep = "\t", stringsAsFactors = F)
-res$id <- sapply(res$eqtl_data, function(x) sub("microarray_", "", x))
+res <- read.table(here("covid_gwas", "freeze5", "chr3_coloc", "result", paste0("summary_coloc.", gwas_analysis, ".eQTL_catalogue.txt")), header = T, sep = "\t", stringsAsFactors = F)
+res$id <- res$eqtl_data
 res$id_match <- paste0(res$eqtl_data, res$eqtl_gene_name)
 stopifnot(tabix_paths$id %in% res$id)
+cat("Unique eQTL studies in the eQTL Catalogue - ", length(unique(res$eqtl_data)), fill = TRUE)
 
 # filter to take best probe = probe with min lead_gwas_variant_eqtl_pval
 res <- res %>% 
@@ -88,8 +97,8 @@ names(res_list)[1] <- "eQTL_catalogue"
 
 # coloc-condmask -------------------------
 # Results of coloc
-res <- read.table(here("eqtl_coloc", "summary_coloc_eQTL_catalogue_condmask.txt"), header = T, sep = "\t", stringsAsFactors = F)
-res$id <- sapply(res$eqtl_data, function(x) sub("microarray_", "", x))
+res <- read.table(here("covid_gwas", "freeze5", "chr3_coloc", "result_condmask", paste0("summary_coloc_condmask.", gwas_analysis, ".eQTL_catalogue.txt")), header = T, sep = "\t", stringsAsFactors = F)
+res$id <- res$eqtl_data
 res$id_match <- paste0(res$eqtl_data, res$eqtl_gene_name)
 
 # filter to take best probe = probe with min lead_gwas_variant_eqtl_pval => not needed
@@ -116,16 +125,17 @@ names(res_condmask_list)[1] <- "eQTL_catalogue"
 ```{r read-in-data-gtex}
 # coloc-standard---------------
 # Results of coloc - GTEX v8
-res <- read.table(here("eqtl_coloc", "summary_coloc_GTEx_v8.txt"), header = T, sep = "\t", stringsAsFactors = F)
+res <- read.table(here("covid_gwas", "freeze5", "chr3_coloc", "result", paste0("summary_coloc.", gwas_analysis, ".GTEx_v8.txt")), header = T, sep = "\t", stringsAsFactors = F)
 res$id <- sapply(res$eqtl_data, function(x) sub("GTEx_v8_ge_", "", x))
 res$id_match <- paste0(res$eqtl_data, res$eqtl_gene_name)
+cat("Unique eQTL studies in GTEx v8 - ", length(unique(res$eqtl_data)), fill = TRUE)
 
 res_list[[2]] <- res
 names(res_list)[2] <- "GTEx_v8"
 
 # coloc-condmask ------------
 # Results of coloc - GTEX v8
-res <- read.table(here("eqtl_coloc", "summary_coloc_GTEx_v8_condmask.txt"), header = T, sep = "\t", stringsAsFactors = F)
+res <- read.table(here("covid_gwas", "freeze5", "chr3_coloc", "result_condmask", paste0("summary_coloc_condmask.", gwas_analysis, ".GTEx_v8.txt")), header = T, sep = "\t", stringsAsFactors = F)
 res$id <- sapply(res$eqtl_data, function(x) sub("GTEx_v8_ge_", "", x))
 res$id_match <- paste0(res$eqtl_data, res$eqtl_gene_name)
 
@@ -148,7 +158,7 @@ names(res_condmask_list)[2] <- "GTEx_v8"
 
 #### P-value based lookup
 
-What's the eQTL P-value of the lead eVariant and lead GWAS variant (3:45867022:C:G) in various studies from the eQTL Catalogue and GTEx?
+What's the eQTL P-value of the lead eVariant and lead GWAS variant (`r lead_gwas`) in various studies from the eQTL Catalogue and GTEx?
 
 * If gene expression data from microarray, then taking the probe for which the GWAS variant has the lowest eQTL P-value
 
@@ -165,16 +175,11 @@ plot_data <- res %>%
     pivot_wider(-lead_eqtl_pval_larger_window, names_from = id, values_from = pval) %>%
     tibble::column_to_rownames(var = "eqtl_gene_name") %>% 
     as.matrix()
-  
-trait_annot <- tabix_paths[, c("id", "tissue_label")]
-rownames(trait_annot) <- trait_annot$id
-  
-trait_annot$id <- NULL
+
 pheatmap(mat = plot_data[c("LIMD1", "SACM1L", "SLC6A20", "LZTFL1", "CCR9", "FYCO1", "CXCR6", "XCR1"), ],
          scale = "none",
          color = viridis::viridis(100),
          na_col = "grey95",
-         #annotation_col = trait_annot,
          cluster_rows = F, cluster_cols = T)
 
 #ggplot(data = res, aes(x = eqtl_gene_name, y = eqtl_data, fill = -log10(lead_eqtl_pval_larger_window))) + 
@@ -193,22 +198,18 @@ plot_data <- res %>%
     pivot_wider(-lead_eqtl_pval_larger_window, names_from = id, values_from = pval) %>%
     tibble::column_to_rownames(var = "eqtl_gene_name") %>% 
     as.matrix()
-  
-trait_annot <- tabix_paths[, c("id", "tissue_label")]
-rownames(trait_annot) <- trait_annot$id
-  
-trait_annot$id <- NULL
+
 pheatmap(mat = plot_data[c("LIMD1", "SACM1L", "SLC6A20", "LZTFL1", "CCR9", "FYCO1", "CXCR6", "XCR1"), ],
          scale = "none",
          color = viridis::viridis(100),
          na_col = "grey95",
-         #annotation_col = trait_annot,
          cluster_rows = F, cluster_cols = T)
 
 #ggplot(data = res, aes(x = eqtl_gene_name, y = eqtl_data, fill = -log10(lead_eqtl_pval_larger_window))) + 
 #  geom_tile()
 
 ```
+
 __2) Heatmap of eQTL P-value of the GWAS variant__
 
 * eQTL Catalogue
@@ -223,15 +224,10 @@ plot_data <- res %>%
   tibble::column_to_rownames(var = "eqtl_gene_name") %>% 
   as.matrix()
 
-trait_annot <- tabix_paths[, c("id", "tissue_label")]
-rownames(trait_annot) <- trait_annot$id
-
-trait_annot$id <- NULL
 pheatmap(mat = plot_data[c("LIMD1", "SACM1L", "SLC6A20", "LZTFL1", "CCR9", "FYCO1", "CXCR6", "XCR1"), ],
          scale = "none",
          color = viridis::viridis(100),
          na_col = "grey95",
-         #annotation_col = trait_annot,
          cluster_rows = F, cluster_cols = T)
 
 #ggplot(data = res, aes(x = eqtl_gene_name, y = eqtl_data, fill = -log10(lead_gwas_variant_eqtl_pval))) + 
@@ -251,15 +247,10 @@ plot_data <- res %>%
   tibble::column_to_rownames(var = "eqtl_gene_name") %>% 
   as.matrix()
 
-trait_annot <- tabix_paths[, c("id", "tissue_label")]
-rownames(trait_annot) <- trait_annot$id
-
-trait_annot$id <- NULL
 pheatmap(mat = plot_data[c("LIMD1", "SACM1L", "SLC6A20", "LZTFL1", "CCR9", "FYCO1", "CXCR6", "XCR1"), ],
          scale = "none",
          color = viridis::viridis(100),
          na_col = "grey95",
-         #annotation_col = trait_annot,
          cluster_rows = F, cluster_cols = T)
 
 #ggplot(data = res, aes(x = eqtl_gene_name, y = eqtl_data, fill = -log10(lead_gwas_variant_eqtl_pval))) + 
@@ -271,7 +262,7 @@ pheatmap(mat = plot_data[c("LIMD1", "SACM1L", "SLC6A20", "LZTFL1", "CCR9", "FYCO
 
 * __eQTL Catalogue__
 
-```{r fig-summary-coloc-eqtl-catalogue, fig.width=15, fig.height=11}
+```{r fig-summary-coloc-eqtl-catalogue, fig.width=17, fig.height=14}
 i <- 1
 res <- res_list[[i]]
 
@@ -288,21 +279,21 @@ res %>%
        y = "Posterior probability from coloc",
        fill = "Coloc hypothesis") +
   geom_col() +
-  facet_wrap(~study) +
+  facet_wrap(~study, ncol = 7) +
   theme(legend.position = "top",
         axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
 
 ```
 
-Studies where PP4 > 0.25:
+Studies where PP4 > 0.5:
 
 ```{r}
 res %>%
   filter(!is.na(coloc_pp4),
-         coloc_pp4 > 0.25) %>% 
+         coloc_pp4 > 0.5) %>% 
   select(-min_lead_gwas_variant_eqtl_pval,
          -id) %>% 
-  mutate(lead_gwas_pval = as.character(signif(lead_gwas_pval, 4)),
+  mutate(lead_gwas_meta_pval = as.character(signif(lead_gwas_meta_pval, 4)),
          lead_eqtl_pval_larger_window = as.character(signif(lead_eqtl_pval_larger_window, 4)),
          lead_eqtl_pval = as.character(signif(lead_eqtl_pval, 4)),
          lead_gwas_variant_eqtl_pval = as.character(signif(lead_gwas_variant_eqtl_pval, 4))) %>% 
@@ -313,7 +304,7 @@ res %>%
 
 * __GTEx__
 
-```{r fig-summary-coloc-gtex, fig.width=15, fig.height=11}
+```{r fig-summary-coloc-gtex, fig.width=17, fig.height=12}
 i <- 2
 res <- res_list[[i]]
 
@@ -330,20 +321,20 @@ res %>%
        y = "Posterior probability from coloc",
        fill = "Coloc hypothesis") +
   geom_col() +
-  facet_wrap(~study) +
+  facet_wrap(~study, ncol = 7) +
   theme(legend.position = "top",
         axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
 
 ```
 
-Studies where PP4 > 0.25:
+Studies where PP4 > 0.5:
 
 ```{r}
 res %>%
   filter(!is.na(coloc_pp4),
-         coloc_pp4 > 0.25) %>% 
+         coloc_pp4 > 0.5) %>% 
   select(-id) %>% 
-  mutate(lead_gwas_pval = as.character(signif(lead_gwas_pval, 4)),
+  mutate(lead_gwas_meta_pval = as.character(signif(lead_gwas_meta_pval, 4)),
          lead_eqtl_pval_larger_window = as.character(signif(lead_eqtl_pval_larger_window, 4)),
          lead_eqtl_pval = as.character(signif(lead_eqtl_pval, 4)),
          lead_gwas_variant_eqtl_pval = as.character(signif(lead_gwas_variant_eqtl_pval, 4))) %>% 
@@ -374,6 +365,7 @@ id <- intersect(stand$id_match, condmask$id_match)
 
 plot(stand[match(id, stand$id_match), "coloc_pp4"], condmask[match(id, condmask$id_match), "PP.H4.abf"],
      xlab = "PP4 from coloc-standard", ylab = "Max PP4 from coloc-condmask",
+     xlim = c(0, 1), ylim = c(0, 1),
      main = "eQTL catalogue")
 abline(0, 1, col = "royalblue")
 
@@ -392,8 +384,9 @@ stopifnot(length(unique(condmask$id_match)) == nrow(condmask))
 
 id <- intersect(stand$id_match, condmask$id_match)
 
-plot(stand[match(id, stand$id_match), "coloc_pp4"], condmask[match(id, condmask$id_match), "PP.H4.abf"],
+plot(stand[match(id, stand$id_match), "coloc_pp4"], condmask[match(id, condmask$id_match), "PP.H4.abf"], 
      xlab = "PP4 from coloc-standard", ylab = "Max PP4 from coloc-condmask",
+     xlim = c(0, 1), ylim = c(0, 1),
      main = "GTEx")
 abline(0, 1, col = "royalblue")
 
@@ -415,7 +408,7 @@ condmask <- condmask[!duplicated(condmask$id_match),]
 stand$max_pp4_condmask <- condmask[match(stand$id_match, condmask$id_match), "max_pp4"]
 stand$id <- NULL
 stand$id_match <- NULL
-# there's three cases where the best probe (= min lead_gwas_eqtl_pval) was not used in coloc test
+# there's four cases where the best probe (= min lead_gwas_eqtl_pval) was not used in coloc test
 # but another probe was used in coloc test, because there was a snp within 100kb from the lead gwas variant with < 10-4, but the lead gwas had eqtl p even lower => no coloc anyway
 stand[is.na(stand$coloc_pp4), "max_pp4_condmask"] <- NA
 out[[1]] <- stand
@@ -433,5 +426,50 @@ out[[2]] <- stand
 
 # write out
 out <- do.call(rbind, out)
-write.table(out, file = here("eqtl_coloc", "suppl_table_coloc_results.txt"), col.names = T, row.names = F, sep = "\t", quote = F)
+write.table(out, file = here("covid_gwas", "freeze5", "chr3_coloc", "result", paste0("suppl_table_coloc_results.", gwas_analysis, ".txt")), col.names = T, row.names = F, sep = "\t", quote = F)
+```
+
+
+* __eQTL Catalogue__
+
+Studies where PP4 > 0.5:
+
+```{r}
+i <- 1
+res <- res_condmask_list[[i]]
+
+res %>%
+  filter(max_pp4 > 0.5) %>% 
+  select(-id,
+         -id_match) %>% 
+  select(eqtl_data, eqtl_gene_name, max_pp4, colnames(res)[!colnames(res) %in% c("eqtl_data", "eqtl_gene_name", "max_pp4", "id", "id_match")]) %>% 
+  mutate(lead_gwas_meta_pval = as.character(signif(lead_gwas_meta_pval, 4)),
+         lead_eqtl_pval_larger_window = as.character(signif(lead_eqtl_pval_larger_window, 4)),
+         lead_eqtl_pval = as.character(signif(lead_eqtl_pval, 4)),
+         lead_gwas_variant_eqtl_pval = as.character(signif(lead_gwas_variant_eqtl_pval, 4))) %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = F, font_size = 14)
+  
+```
+
+* __GTEx__
+
+Studies where PP4 > 0.5:
+
+```{r}
+i <- 2
+res <- res_condmask_list[[i]]
+
+res %>%
+  filter(max_pp4 > 0.5) %>% 
+  select(-id,
+         -id_match) %>% 
+  select(eqtl_data, eqtl_gene_name, max_pp4, colnames(res)[!colnames(res) %in% c("eqtl_data", "eqtl_gene_name", "max_pp4", "id", "id_match")]) %>% 
+  mutate(lead_gwas_meta_pval = as.character(signif(lead_gwas_meta_pval, 4)),
+         lead_eqtl_pval_larger_window = as.character(signif(lead_eqtl_pval_larger_window, 4)),
+         lead_eqtl_pval = as.character(signif(lead_eqtl_pval, 4)),
+         lead_gwas_variant_eqtl_pval = as.character(signif(lead_gwas_variant_eqtl_pval, 4))) %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = F, font_size = 14)
+  
 ```
