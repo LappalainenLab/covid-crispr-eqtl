@@ -1,0 +1,430 @@
+---
+title: "Overlap between the top 500 genes from the CRISPR screen and eQTLs in GTEx Lung"
+author: "Silva Kasela"
+date: "04/28/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+options(knitr.table.format = "html")
+
+library(here)
+library(data.table)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(VennDiagram)
+
+theme_set(theme_classic() +
+          theme(plot.title = element_text(size = 14),
+	              plot.subtitle = element_text(size = 12),
+                axis.title = element_text(size = 12),
+                axis.title.y = element_text(vjust = 2),
+                axis.title.x = element_text(vjust = -0.75),
+                axis.text = element_text(size = 11),
+                strip.text = element_text(size = 11),
+                legend.title = element_text(size = 12),
+                legend.text = element_text(size = 11)))
+
+```
+
+CRISPR genome-wide loss-of-function screen in human A549 (lung) cells for SARS-CoV-2 resistance from [Daniloski et al. 2021, Cell](https://doi.org/10.1016/j.cell.2020.10.030)
+
+```{r path-to-data}
+# Includes top 500 genes ranked by three methods (RRA, RIGER, SB score) in low MOI experiment, related to Figure S1C
+crispr_file <- "top_500_genes_SB_RIGER_RRA.csv"
+eqtl_path <- "~/gtex_v8/"
+eqtl_file <- "eqtl/GTEx_Analysis_v8_eQTL/Lung.v8.egenes.txt.gz"
+gene_annot_file <- "references/gencode.v26.GRCh38.genes.gtf"
+
+```
+
+## Data
+
+```{r read-in-data}
+# crisp data
+crispr <- read.table(here("data", crispr_file), header = T, sep = ",", stringsAsFactors = F)
+crispr <- crispr %>%
+  mutate(rank = 1:n()) %>%
+  pivot_longer(cols = -rank, names_to = "method", values_to = "gene_id") %>%
+  mutate(gene_name = gene_id) %>%
+  pivot_wider(id_cols = c(gene_id, gene_name), names_from = method, values_from = rank)
+crispr_orig <- crispr
+
+# eqtl data
+eqtl <- fread(paste0(eqtl_path, eqtl_file), header = T, sep = "\t", stringsAsFactors = F, data.table = F)
+eqtl$id <- paste0(eqtl$gene_id, "_", eqtl$variant_id)
+
+# gencode gene annotations
+gene_annot <- read.table(paste0(eqtl_path, gene_annot_file), header = F, sep = "\t", stringsAsFactors = F)
+gene_annot <- gene_annot[gene_annot$V3 %in% "gene",]
+gene_annot$gene_id <- sapply(gene_annot$V9, function(x) sub("gene_id ", "", unlist(strsplit(x, "; "))[1]))
+gene_annot$gene_id.1 <- sapply(gene_annot$gene_id, function(x) unlist(strsplit(x, "[.]"))[1])
+gene_annot$gene_name <- sapply(gene_annot$V9, function(x) sub("gene_name ", "", unlist(strsplit(x, "; "))[4]))
+gene_annot$gene_type <- sapply(gene_annot$V9, function(x) sub("gene_type ", "", unlist(strsplit(x, "; "))[3]))
+stopifnot(eqtl$gene_id %in% gene_annot$gene_id)
+
+```
+
+* CRISPR screen hits from _`r crispr_file`_
+    + Top-ranked (top 500) genes between 3 different analysis methods (RRA, RIGER, and SBR) in low MOI experiment
+    + `r length(unique(crispr$gene_name))` unique gene names in total
+    + `r nrow(crispr[!is.na(crispr$rra1) & !is.na(crispr$riger1) & !is.na(crispr$sb1), ])` genes among top 500 genes based on all the three methods
+
+```{r venn-plot, fig.width=6, fig.height=6, out.width='50%'}
+rra <- crispr %>%
+  filter(!is.na(rra1)) %>%
+  select(gene_id) %>%
+  as.data.frame()
+
+riger <- crispr %>%
+  filter(!is.na(riger1)) %>%
+  select(gene_id) %>%
+  as.data.frame()
+
+sb <- crispr %>%
+  filter(!is.na(sb1)) %>%
+  select(gene_id) %>%
+  as.data.frame()
+
+venn_plot <- venn.diagram(
+	x = list(
+		rra = rra$gene_id,
+		riger = riger$gene_id,
+		sbr = sb$gene_id
+		),
+	filename = NULL,
+	col = "transparent",
+	fill = c("red", "blue", "green"),
+	alpha = 0.5,
+	label.col = c("darkred", "white", "darkblue", "white", "white", "white", "darkgreen"),
+	cex = 2.5,
+	fontfamily = "serif",
+	fontface = "bold",
+	cat.default.pos = "text",
+	cat.col = c("darkred", "darkblue", "darkgreen"),
+	cat.cex = 2.5,
+	cat.fontfamily = "serif",
+	cat.dist = c(0.06, 0.06, 0.03),
+	cat.pos = 0
+	)
+
+grid.draw(venn_plot)
+grid.newpage()
+
+```
+
+
+* eQTLs from GTEx v8 Lung - _`r eqtl_file`_
+    + `r nrow(eqtl)` genes analyzed for eQTLs
+    + `r sum(eqtl$qval < 0.05)` significant eGenes (genes with eQTLs) with q-value < 0.05
+
+#### Matching gene symbols from CRISPR screen to Ensembl IDs
+
+* GENCODE version 26 (Ensembl 88, GRCh38) used in GTEx
+* Using the [Complete HGNC dataset](https://www.genenames.org/download/statistics-and-files/) to get the previous HGNC symbols too
+
+```{r find-matches}
+no_match <- crispr[!crispr$gene_name %in% gene_annot$gene_name,]
+# Leave out hsa-mir and NonTargetingControlGuideForHuman
+no_match <- no_match[!grepl("hsa-mir|NonTargeting", no_match$gene_name),]
+no_match$match_column <- NA
+no_match$match_symbol <- NA
+no_match$match_symbol_main <- NA
+no_match$match_ensmbl_id <- NA
+
+# Complete HGNC dataset from here https://www.genenames.org/download/statistics-and-files/
+complete_hgnc <- fread("ftp://ftp.ebi.ac.uk/pub/databases/genenames/hgnc/tsv/hgnc_complete_set.txt", header = T, sep = "\t", stringsAsFactors = F, data.table = F)
+
+for (i in 1:nrow(no_match)) {
+  g <- no_match$gene_name[i]
+  cat(g, fill = T)
+  idx <- c(which(complete_hgnc$symbol %in% g), grep(g, complete_hgnc$alias_symbol), grep(g, complete_hgnc$prev_symbol))
+  idx <- sort(unique(idx))
+  sel <- complete_hgnc[idx,]
+
+  for (group in c("symbol", "alias_symbol", "prev_symbol")) {
+    for (j in 1:nrow(sel)) {
+      symb <- unlist(strsplit(sel[j, group], "[|]"))
+      if (g %in% symb) {
+        cat("match: ", sel[j, "symbol"], "-", sel[j, "ensembl_gene_id"], fill = TRUE)
+        no_match$match_column[i] <- group
+        no_match$match_symbol[i] <- sel[j, group]
+        no_match$match_symbol_main[i] <- sel[j, "symbol"]
+        no_match$match_ensmbl_id[i] <- sel[j, "ensembl_gene_id"]
+      }
+    }
+  }
+  cat("-------", fill = TRUE)
+}
+
+# exlcude no match rows or where there's no ensembl id
+no_match <- no_match[!is.na(no_match$match_ensmbl_id) & !no_match$match_ensmbl_id %in% "", ]
+
+# new matches
+no_match <- no_match[no_match$match_ensmbl_id %in% gene_annot$gene_id.1,]
+
+# double check
+idx <- which(no_match$match_symbol_main != gene_annot[match(no_match$match_ensmbl_id, gene_annot$gene_id.1), "gene_name"])
+if (length(idx) > 0) {
+  for (i in 1:length(idx)) {
+    if (!grepl(gene_annot[gene_annot$gene_id.1 %in% no_match$match_ensmbl_id[idx[i]], "gene_name"], no_match$match_symbol[idx[i]])) {
+      cat("Warning: check overlap between gencode and complete hgnc annotation for ", no_match$match_ensmbl_id[idx[i]])
+    }
+  }
+}
+
+# add new info to the crispr file
+crispr$gene_name_original <- crispr$gene_name
+crispr[match(no_match$gene_name, crispr$gene_name), "gene_name"] <- gene_annot[match(no_match$match_ensmbl_id, gene_annot$gene_id.1), "gene_name"]
+crispr$gene_id <- gene_annot[match(crispr$gene_name, gene_annot$gene_name), "gene_id"]
+crispr$gene_type <- gene_annot[match(crispr$gene_name, gene_annot$gene_name), "gene_type"]
+
+## AGPAT9 is now GPAT3 (ENSG00000138678)
+## crispr[crispr$gene_name_original %in% "AGPAT9",]
+##  gene_id            gene_name  rra1 riger1   sb1 gene_name_original
+##  <chr>              <chr>     <int>  <int> <int> <chr>
+## ENSG00000138678.10 GPAT3        NA     NA   481 AGPAT9
+
+# write out results
+write.table(crispr, here("data", sub(".csv", "_with_ensembl_id.txt", crispr_file)), col.names = T, row.names = F, sep = "\t", quote = F)
+
+```
+
+* Number of genes which don't have matching Ensembl ID - `r sum(!(crispr[!grepl("hsa-mir|NonTargeting", crispr$gene_name_original), "gene_name"] %>% as.data.frame())$gene_name %in% gene_annot$gene_name)` out of `r nrow(crispr[!grepl("hsa-mir|NonTargeting", crispr$gene_name_original), ])` genes
+
+```{r}
+crispr %>%
+  filter(!grepl("hsa-mir|NonTargeting", crispr$gene_name_original),
+         !gene_name %in% gene_annot$gene_name) %>%
+  kable(row.names = F) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = F, font_size = 14) %>%
+  scroll_box(width = "100%", height = "200px")
+
+```
+
+* Gene types
+
+```{r}
+addmargins(table(crispr$gene_type, useNA = "ifany"))
+
+```
+
+```{r crispr-final-set}
+crispr <- crispr %>%
+  filter(!is.na(gene_id),
+         gene_type %in% "protein_coding")
+
+```
+
+```{r}
+if (length(unique(crispr$gene_id)) != nrow(crispr)) {
+  cat("Warning: same gene ID mapped to two different HGNC gene symbols", fill = T)
+  print(crispr[crispr$gene_id %in% crispr$gene_id[duplicated(crispr$gene_id)],])
+
+  cat("Keeping the first entry", fill = TRUE)
+  crispr <- crispr[!crispr$gene_name_original %in% "CTSL1",]
+}
+
+```
+
+* Final number of protein-coding genes in the CRPISR screen file - __`r nrow(crispr)` genes__
+
+
+## eQTL lookup
+
+* __`r sum(crispr$gene_id %in% eqtl$gene_id)` of the CRISPR screen hit genes__ have been used in eQTL mapping (i.e., passed QC -> expressed in that tissue)
+    + `r sum(!crispr$gene_id %in% eqtl$gene_id)` genes not found from the eQTL summary stats file:
+
+```{r}
+crispr %>%
+  filter(!gene_id %in% eqtl$gene_id) %>%
+  kable(row.names = F) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = F, font_size = 14) %>%
+  scroll_box(width = "100%", height = "200px")
+
+```
+
+```{r intersect}
+crispr <- crispr %>%
+  mutate(is_expressed_in_gtex_lung = if_else(gene_id %in% eqtl$gene_id, 1, 0),
+         is_egene_in_gtex_lung = if_else(gene_id %in% eqtl[eqtl$qval < 0.05, "gene_id"], 1, 0))
+
+# write out
+write.table(crispr, here("data", sub(".csv", "_with_ensembl_id.intersect_gtex_lung.txt", crispr_file)), col.names = T, row.names = F, sep = "\t", quote = F)
+
+```
+
+* __`r sum(crispr$is_egene_in_gtex_lung)` of the CRISPR screen hit genes have also eQTLs in GTEx Lung__
+
+
+
+```{r fig, fig.width=8, fig.height=4.5}
+crispr %>%
+  pivot_longer(cols = c(rra1, riger1, sb1), names_to = "method", values_to = "rank") %>%
+  filter(!is.na(rank)) %>%
+  group_by(method) %>%
+  summarize(n_total = n(),
+            n_expressed = sum(is_expressed_in_gtex_lung),
+            n_egene = sum(is_egene_in_gtex_lung)) %>%
+  pivot_longer(cols = c(n_total, n_expressed, n_egene), names_to = "n", values_to = "counts") %>%
+  mutate(n = factor(n, levels = c("n_total", "n_expressed", "n_egene"))) %>%
+  ggplot(aes(x = n, y = counts, fill = method)) +
+  labs(title = "Intersection of top-ranked genes in the CRISPR screen and eQTLs in GTEx Lung",
+       subtitle = "Including protein-coding genes only",
+       x = "",
+       y = "# genes") +
+  geom_col() +
+  geom_text(aes(label = counts), hjust = 0.5, vjust = 1) +
+  facet_wrap(~method) +
+  scale_y_continuous(limits = c(0, 500)) +
+  guides(fill = FALSE) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+```
+
+#### Venn plots
+
+* All protein-coding genes
+
+```{r venn-plot-1, fig.width=6, fig.height=6, out.width='50%'}
+rra <- crispr %>%
+  filter(!is.na(rra1)) %>%
+  select(gene_id) %>%
+  as.data.frame()
+
+riger <- crispr %>%
+  filter(!is.na(riger1)) %>%
+  select(gene_id) %>%
+  as.data.frame()
+
+sb <- crispr %>%
+  filter(!is.na(sb1)) %>%
+  select(gene_id) %>%
+  as.data.frame()
+
+venn_plot <- venn.diagram(
+	x = list(
+		rra = rra$gene_id,
+		riger = riger$gene_id,
+		sbr = sb$gene_id
+		),
+	filename = NULL,
+	col = "transparent",
+	fill = c("red", "blue", "green"),
+	alpha = 0.5,
+	label.col = c("darkred", "white", "darkblue", "white", "white", "white", "darkgreen"),
+	cex = 2.5,
+	fontfamily = "serif",
+	fontface = "bold",
+	cat.default.pos = "text",
+	cat.col = c("darkred", "darkblue", "darkgreen"),
+	cat.cex = 2.5,
+	cat.fontfamily = "serif",
+	cat.dist = c(0.06, 0.06, 0.03),
+	cat.pos = 0
+	)
+
+grid.draw(venn_plot)
+grid.newpage()
+
+```
+
+* Genes expressed in GTEx Lung
+
+```{r venn-plot-2, fig.width=6, fig.height=6, out.width='50%'}
+rra <- crispr %>%
+  filter(!is.na(rra1),
+         is_expressed_in_gtex_lung %in% 1) %>%
+  select(gene_id) %>%
+  as.data.frame()
+
+riger <- crispr %>%
+  filter(!is.na(riger1),
+         is_expressed_in_gtex_lung %in% 1) %>%
+  select(gene_id) %>%
+  as.data.frame()
+
+sb <- crispr %>%
+  filter(!is.na(sb1),
+         is_expressed_in_gtex_lung %in% 1) %>%
+  select(gene_id) %>%
+  as.data.frame()
+
+venn_plot <- venn.diagram(
+	x = list(
+		rra = rra$gene_id,
+		riger = riger$gene_id,
+		sbr = sb$gene_id
+		),
+	filename = NULL,
+	col = "transparent",
+	fill = c("red", "blue", "green"),
+	alpha = 0.5,
+	label.col = c("darkred", "white", "darkblue", "white", "white", "white", "darkgreen"),
+	cex = 2.5,
+	fontfamily = "serif",
+	fontface = "bold",
+	cat.default.pos = "text",
+	cat.col = c("darkred", "darkblue", "darkgreen"),
+	cat.cex = 2.5,
+	cat.fontfamily = "serif",
+	cat.dist = c(0.06, 0.06, 0.03),
+	cat.pos = 0
+	)
+
+grid.draw(venn_plot)
+grid.newpage()
+
+```
+
+* Genes that are eGenes in GTEx Lung
+
+```{r venn-plot-3, fig.width=6, fig.height=6, out.width='50%'}
+rra <- crispr %>%
+  filter(!is.na(rra1),
+         is_egene_in_gtex_lung %in% 1) %>%
+  select(gene_id) %>%
+  as.data.frame()
+
+riger <- crispr %>%
+  filter(!is.na(riger1),
+         is_egene_in_gtex_lung %in% 1) %>%
+  select(gene_id) %>%
+  as.data.frame()
+
+sb <- crispr %>%
+  filter(!is.na(sb1),
+         is_egene_in_gtex_lung %in% 1) %>%
+  select(gene_id) %>%
+  as.data.frame()
+
+venn_plot <- venn.diagram(
+	x = list(
+		rra = rra$gene_id,
+		riger = riger$gene_id,
+		sbr = sb$gene_id
+		),
+	filename = NULL,
+	col = "transparent",
+	fill = c("red", "blue", "green"),
+	alpha = 0.5,
+	label.col = c("darkred", "white", "darkblue", "white", "white", "white", "darkgreen"),
+	cex = 2.5,
+	fontfamily = "serif",
+	fontface = "bold",
+	cat.default.pos = "text",
+	cat.col = c("darkred", "darkblue", "darkgreen"),
+	cat.cex = 2.5,
+	cat.fontfamily = "serif",
+	cat.dist = c(0.06, 0.06, 0.03),
+	cat.pos = 0
+	)
+
+grid.draw(venn_plot)
+grid.newpage()
+
+```
