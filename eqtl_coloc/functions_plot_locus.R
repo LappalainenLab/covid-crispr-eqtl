@@ -237,11 +237,13 @@ locuszoom_ld <- function(data, main,
                          ld_pos_start = NULL, ld_pos_end = NULL,
                          geno = FALSE, genofile = NA,
                          max_y = NULL,
-                         point_size = 1.5) {
+                         point_size = 1.5,
+                         colorblindsafe = FALSE) {
   # dataframe `data` with the two columns: pval, pos, variant_id, ld (optional, if present then this is used to show LD)
   # matrix `geno`: individuals in rows, variants in columns
   # highlight_index.label - variant IDs to show on figures
   # numeric `max_y`: to set limits on the y-axis
+  # logical `colorblindsafe` - use colorblind safe colors for showing LD
 
   # Sanity checks - p-values = 0 will be replaced with the most significant p-value that is not 0
   if (sum(data$gwas_pval == 0) > 0) {
@@ -327,7 +329,13 @@ locuszoom_ld <- function(data, main,
       data <- data[c(idx, other_idx),]
     }
 
-    lz_colors = c("#282973", "#8CCCF0", "#69BD45", "#F9A41A", "#ED1F24")
+    if (colorblindsafe) {
+      # Use colorblind safe colors
+      # https://colorbrewer2.org/#type=diverging&scheme=RdYlBu&n=6; leaving out #e0f3f8
+      lz_colors = c("#4575b4", "#91bfdb", "#fee090", "#fc8d59", "#d73027")
+    } else {
+      lz_colors = c("#282973", "#8CCCF0", "#69BD45", "#F9A41A", "#ED1F24")
+    }
   }
 
   # x-axis breaks and labels

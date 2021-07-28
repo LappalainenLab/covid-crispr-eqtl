@@ -1,7 +1,7 @@
 ---
 title: "Summary chr3 locus - B2_ALL_leave_23andme"
 author: "Silva Kasela"
-date: "6/21/2021"
+date: "7/28/2021"
 output: html_document
 ---
 
@@ -468,7 +468,8 @@ for (type in c("gwas", best_tissue$eqtl_gene_name)) {
                     highlight_index = which(data$pos == gwas_pos),
                     highlight_index.label = data[data$pos == gwas_pos, "SNP"],
                     max_y = max_y,
-                    point_size = 2)
+                    point_size = 2,
+                    colorblindsafe = TRUE)
   print(g)
 }
 
