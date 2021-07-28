@@ -1,0 +1,125 @@
+---
+title: "Summary of LDSC analysis"
+author: "Silva Kasela"
+date: "5/25/2021"
+output:
+  html_document:
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(here)
+library(dplyr)
+library(ggplot2)
+
+# set theme using the setup chunk
+theme_set(theme_classic() +
+            theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 12),
+                  axis.title = element_text(size = 12),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 11),
+                  strip.text = element_text(size = 11),
+                  legend.title = element_text(size = 12),
+                  legend.text = element_text(size = 11)))
+
+```
+
+LDSC
+
+Note that
+
+* Enrichment of a category = (proportion of SNP heritability in the category) /  (proportion of SNPs in that category)
+* We estimate standard errors with a block jackknife and use these standard errors to calculate z scores, P values and false discovery rates (FDRs)
+* We also report the jackknife standard errors of the proportion of heritability, even though this is not what we use to assess significance
+
+## Top-ranked genes in the CRISPR screen based on any of the three ranking methods
+
+Annotation for all 890 proteinc-coding genes that are among the 500 top-ranked genes in the CRISPR screen based on at least on of the three methods
+
+```{r}
+title <- "Top-ranked CRISPR genes"
+path <- "~/lab/sbollepalli/projects/covid_crispr/scripts/res_top_500_genes_SB_RIGER_RRA"
+files <- list.files(path = path, pattern = ".results")
+
+res <- lapply(files, function(f) {
+  r <- read.table(paste0(path, "/", f), header = T, sep = "\t", stringsAsFactors = F)
+  r <- r[r$Category %in% "L2_1", ]
+  r$file <- f
+  return(r)
+  })
+res <- do.call(rbind, res)
+res <- res[grepl("100KB", res$file),]
+
+# Save file
+out <- res
+out$Category <- "Top-ranked CRISPR genes"
+out$gwas <- sapply(out$file, function(x) unlist(strsplit(x, "[.]"))[1])
+out$file <- NULL
+write.table(out, file = here("covid_gwas", "freeze5", "ldsc", "suppl_table_ldsc.txt"), sep = "\t", col.names = T, row.names = F, quote = F)
+
+# Add labels
+res$gwas_file <- sapply(res$file, function(x) unlist(strsplit(x, "[.]"))[1])
+res$gwas_analysis <- sub("_leave_23andme_20210107", "", sub("COVID19_HGI_", "", res$gwas_file))
+res$window <- "100KB"
+res$geneset <- "n = 890 protein-coding genes"
+
+# Labels
+res$geneset_window <- paste0(res$geneset, "_", res$window)
+res$gwas_geneset <- paste0(res$gwas_analysis, "_", res$geneset)
+
+# Enirchment CI
+res$enrichment_se_lower <- res$Enrichment - res$Enrichment_std_error
+res$enrichment_se_upper <- res$Enrichment + res$Enrichment_std_error
+
+# Y-axis limit
+max_y <- max(2, -log10(res$Enrichment_p))
+
+# Order GWAS
+res$gwas_analysis_f <- factor(res$gwas_analysis, levels = rev(sort(unique(res$gwas_analysis))))
+
+```
+
+```{r fig-top500, fig.width=12, fig.height=1.5, out.width='90%'}
+ggplot(data = res, aes(x = geneset_window, y = -log10(Enrichment_p))) +
+  labs(title = title,
+       x = "",
+       y = "-log10(Enrichment P-value)") +
+  geom_col() +
+  geom_hline(yintercept = -log10(0.05), lty = 2, col = "royalblue") +
+  geom_hline(yintercept = -log10(0.05/4), lty = 3, col = "royalblue") +
+  scale_y_continuous(limits = c(0, max_y)) +
+  facet_wrap(~gwas_analysis, nrow = 1) +
+  coord_flip()
+
+```
+
+Forest plots
+
+```{r fig-top500-forest, fig.width=6, fig.height=2.5, out.width='90%'}
+g <- res %>%
+  filter(Enrichment > 0,
+         window %in% "100KB") %>% 
+  ggplot(aes(x = factor(gwas_analysis_f), y = Enrichment)) +
+  labs(title = title,
+       subtitle = "Window size - 100kb",
+       x = "COVID-19 phenotype",
+       y = "Enrichment\nwith jackknife standard errors",
+       fill = "COVID-19 phenotype") +
+  geom_col(aes(fill = gwas_analysis)) +
+  geom_errorbar(aes(ymin = enrichment_se_lower, ymax = enrichment_se_upper), col = "grey25", width = 0.25, position = position_dodge(width = 0.25)) +
+  geom_text(aes(label = signif(Enrichment_p, 3)), hjust = -1.5) +
+  geom_hline(yintercept = 1, lty = 2, col = "grey25") +
+  #coord_cartesian(ylim = c(0, 20)) +
+  scale_y_continuous(limits = c(0, 4.5)) +
+  scale_fill_brewer(type = "qual") +
+  facet_grid(~geneset) +
+  coord_flip() +
+  guides(colour = guide_legend(reverse = T))
+print(g)
+ggsave(filename = here("covid_gwas", "freeze5", "ldsc", "fig-ldsc-500-top-ranked-genes.pdf"), plot = g, width = 6, height = 2.5)
+
+```
