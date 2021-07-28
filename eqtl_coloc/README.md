@@ -3,7 +3,7 @@
 ## Data
 
 * Using eQTLs and sQTLs from [GTEx v8](https://gtexportal.org/home/)
-* Using molQTLS from the [eQTL Catalogue](https://www.ebi.ac.uk/eqtl/)
+* Using molQTLs from the [eQTL Catalogue](https://www.ebi.ac.uk/eqtl/)
 * Using COVID-19 GWAS summary statistics by the [COVID-19 Host Genetics Initiative](https://www.covid19hg.org/) (round 5)
 
 ## Prepare data for analyses
@@ -69,12 +69,12 @@ summary_coloc_chr3_genes.Rmd
 summary_coloc_chr3_genes_other_molqtls.Rmd
 ```
 
-## Colocalization analysis with Joint Likelihoood Mapping (JLIM)[https://github.com/cotsapaslab/jlim]
+## Colocalization analysis with [Joint Likelihoood Mapping (JLIM)](https://github.com/cotsapaslab/jlim)
 
 Primary trait summary statistics file:
 
-* Named by TraitName.CHR.STARTBP.ENDBP.tx
-* Space-delimited and has CHR, BP, and SNP. It also has to carry one of STAT, T, or P. If P is specified, the two-sided P-value will be transformed into Z-statistic. STAT or T will be approximated as Z-statistic.
+* _Named by TraitName.CHR.STARTBP.ENDBP.tx_
+* _Space-delimited and has CHR, BP, and SNP. It also has to carry one of STAT, T, or P. If P is specified, the two-sided P-value will be transformed into Z-statistic. STAT or T will be approximated as Z-statistic._
 
 ```bash
 GWAS='B2_ALL_eur' #C2_ALL_eur
@@ -95,11 +95,12 @@ Specify the indexSNP file:
 
 Generate the reference LD file:
 
-* Reference LD files are provided one for each interval. It is a tab-delimited file without header. The file name is specified as locus.CHR.STARTBP.ENDBP.txt.gz. Each row is a marker, and it contains the following columns: CHROM, POS, ID, REF, ALT, QUAL, FILTER, and is followed by two alleles for each individual.
+* _Reference LD files are provided one for each interval. It is a tab-delimited file without header. The file name is specified as locus.CHR.STARTBP.ENDBP.txt.gz. Each row is a marker, and it contains the following columns: CHROM, POS, ID, REF, ALT, QUAL, FILTER, and is followed by two alleles for each individual._
 
 ```bash
 module load tabix
 module load vcftools/0.1.14
+# export PERL5LIB=/nfs/sw/vcftools/vcftools-0.1.14/perl/
 PATH_1KG='~/lab/data/1kg'
 
 # List of individuals in the 1000G files that only includes unrelated individuals
