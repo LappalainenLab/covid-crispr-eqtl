@@ -2,7 +2,7 @@
 
 Integration of genome-scale CRISPR loss-of-function screens and eQTLs in diverse cell types and tissues to pinpoint genes underlying COVID-19 risk in the 3p21.31 locus
 
-This repository contains code to conduct the analyses presented in the article "_Integrative approach identifies_ SLC6A20 _and_ CXCR6 _as putative causal genes for the COVID-19 GWAS signal in the 3p21.31 locus_" (Kasela et al., 2021), see the preprint in [medRxiv](https://doi.org/10.1101/2021.04.09.21255184)).
+This repository contains code to conduct the analyses presented in the article "_Integrative approach identifies_ SLC6A20 _and_ CXCR6 _as putative causal genes for the COVID-19 GWAS signal in the 3p21.31 locus_" ([Kasela et al., 2021, Genome Biol](https://doi.org/10.1186/s13059-021-02454-4), see the preprint in [medRxiv](https://doi.org/10.1101/2021.04.09.21255184)).
 
 ## Overview of this repository
 
